@@ -1862,7 +1862,7 @@ class DetailPageScraper:
     
     @staticmethod
     def fetch_newold_details(detail_url: str) -> Dict[str, str]:
-        """NEWOLD CAPITALの詳細ページから情報を取得"""
+        """NEWOLD CAPITALの詳細ページから情報を取得（タイトル抽出追加版）"""
         if not detail_url:
             return {}
         
@@ -1892,7 +1892,11 @@ class DetailPageScraper:
                         f.write(response.text)
                     logging.info(f"Debug: Detail HTML saved to {debug_file}")
                 
+                # タイトル抽出を追加
+                title = DetailPageScraper._extract_newold_title_from_detail_page(detail_soup)
+                
                 return {
+                    'title': title,  # 新規追加
                     'profit': DetailPageScraper._extract_newold_profit(detail_soup),
                     'features': DetailPageScraper._extract_newold_features(detail_soup),
                     'price': DetailPageScraper._extract_newold_price(detail_soup)
@@ -2187,7 +2191,60 @@ class DetailPageScraper:
         
         logging.warning("    -> No features found with any method")
         return ""
-    
+
+    @staticmethod
+    def _extract_newold_title_from_detail_page(detail_soup: BeautifulSoup) -> str:
+        """NEWOLD CAPITALの詳細ページからタイトルを抽出"""
+        
+        # 方法1: ページタイトルから抽出（最も確実）
+        page_title = detail_soup.find('title')
+        if page_title:
+            title_text = page_title.get_text(strip=True)
+            # 「| NEWOLD CAPITAL」などのサイト名を除去
+            if ' | ' in title_text:
+                business_title = title_text.split(' | ')[0].strip()
+                if business_title and len(business_title) > 5:
+                    logging.info(f"    -> Found title from page title: {business_title}")
+                    return business_title
+            # サイト名がない場合はそのまま使用
+            elif title_text and len(title_text) > 5 and 'NEWOLD' not in title_text:
+                logging.info(f"    -> Found title from page title (no separator): {title_text}")
+                return title_text
+        
+        # 方法2: h1タグから抽出
+        h1_element = detail_soup.find('h1')
+        if h1_element:
+            h1_text = h1_element.get_text(strip=True)
+            if h1_text and len(h1_text) > 5 and '案件' not in h1_text:
+                logging.info(f"    -> Found title from h1: {h1_text}")
+                return h1_text
+        
+        # 方法3: 事業の内容セクションから抽出
+        business_content_heading = detail_soup.find('h3', string=re.compile(r'事業の内容'))
+        if business_content_heading:
+            next_element = business_content_heading.find_next_sibling(['p', 'div'])
+            if next_element:
+                content_text = next_element.get_text(strip=True)
+                # 最初の行または短い説明文を取得
+                first_sentence = content_text.split('。')[0].strip()
+                if first_sentence and 10 < len(first_sentence) < 100:
+                    logging.info(f"    -> Found title from business content: {first_sentence}")
+                    return first_sentence
+        
+        # 方法4: メタタグのdescriptionから抽出
+        meta_description = detail_soup.find('meta', attrs={'name': 'description'})
+        if meta_description:
+            description = meta_description.get('content', '').strip()
+            if description:
+                # 最初の文を取得
+                first_sentence = description.split('。')[0].strip()
+                if first_sentence and 10 < len(first_sentence) < 100:
+                    logging.info(f"    -> Found title from meta description: {first_sentence}")
+                    return first_sentence
+        
+        logging.warning("    -> Could not extract title from detail page")
+        return "案件詳細"
+
     @staticmethod
     def _extract_newold_profit(detail_soup: BeautifulSoup) -> str:
         """NEWOLD CAPITALの営業利益の抽出（修正版）"""
@@ -3218,7 +3275,7 @@ def enhance_integroup_deals_with_details(raw_deals: List[RawDealData]) -> List[R
     return enhanced_deals
 
 def enhance_newold_deals_with_details(raw_deals: List[RawDealData]) -> List[RawDealData]:
-    """NEWOLD CAPITALの詳細ページから情報を取得して既存データを拡張"""
+    """NEWOLD CAPITALの詳細ページから情報を取得して既存データを拡張（タイトル更新追加版）"""
     logging.info(f"🔗 Fetching details for {len(raw_deals)} deals from NEWOLD CAPITAL")
     enhanced_deals = []
     
@@ -3228,6 +3285,11 @@ def enhance_newold_deals_with_details(raw_deals: List[RawDealData]) -> List[RawD
             
             # 詳細ページから情報取得
             detail_info = DetailPageScraper.fetch_newold_details(deal.link)
+            
+            # タイトルを更新（重要な修正点）
+            if detail_info.get('title'):
+                deal.title = detail_info['title']
+                logging.info(f"    -> Updated title to: {deal.title}")
             
             if detail_info.get('profit'):
                 # 営業利益のフィルタリング
