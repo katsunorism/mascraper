@@ -1389,9 +1389,13 @@ class NewoldCapitalParser:
             
             deal_id = deal_id_match.group(1)
             
-            # タイトルの抽出
+            # タイトルの抽出（修正箇所）
             title_element = item.select_one('h3.p-projects-list__item__title')
-            title = title_element.get_text(strip=True) if title_element else "案件詳細"
+            if title_element:
+                title = title_element.get_text(strip=True)
+            else:
+                # フォールバック: リンク先のページタイトルやテキストから抽出を試行
+                title = "案件詳細"
             
             # データリストから売上高とエリアを抽出
             revenue_text = ""
@@ -1657,92 +1661,88 @@ class OnDeckParser:
     @staticmethod
     def _extract_title_from_element(element: Tag, deal_id: str) -> str:
         """要素からタイトル（業種）を抽出（修正版）"""
-        # オンデック専用のセレクタで詳細データ領域を直接指定
-        data_list = element.select_one('dl.p-sell-single__data__list') or element
         
-        if data_list:
-            # すべてのdt/dd要素を順序通りに取得
-            all_dts = data_list.find_all('dt')
-            all_dds = data_list.find_all('dd')
-            
-            # dt/ddが交互に配置されていると仮定して処理
-            for i, dd in enumerate(all_dds):
-                dd_text = dd.get_text(strip=True)
-                if '業種' in dd_text:
-                    # 対応するdtを探す（通常は次の要素または同じインデックス）
-                    corresponding_dt = None
-                    
-                    # パターン1: 次のdt要素を取得
-                    if i < len(all_dts):
-                        corresponding_dt = all_dts[i]
-                    
-                    # パターン2: ddの直後のdt要素を探す
-                    if not corresponding_dt or not corresponding_dt.get_text(strip=True):
-                        next_dt = dd.find_next_sibling('dt')
-                        if next_dt:
-                            corresponding_dt = next_dt
-                    
-                    # パターン3: ddの直前のdt要素を探す
-                    if not corresponding_dt or not corresponding_dt.get_text(strip=True):
-                        prev_dt = dd.find_previous_sibling('dt')
-                        if prev_dt:
-                            corresponding_dt = prev_dt
-                    
-                    if corresponding_dt:
-                        title_text = corresponding_dt.get_text(strip=True)
-                        if title_text and 3 < len(title_text) <= 50 and '。' not in title_text:
-                            logging.info(f"    -> Found title via業種 label: {title_text}")
-                            return title_text
+        # 方法1: ページタイトルからの抽出（最も確実）
+        # ページタイトルは通常 "業種名 | Ｍ＆Ａ支援のオンデック" の形式
+        page_title = element.find('title')
+        if page_title:
+            title_text = page_title.get_text(strip=True)
+            # " | Ｍ＆Ａ支援のオンデック" の部分を除去
+            if ' | ' in title_text:
+                business_type = title_text.split(' | ')[0].strip()
+                if business_type and len(business_type) <= 20:
+                    logging.info(f"    -> Found title from page title: {business_type}")
+                    return business_type
         
-        # フォールバック1: data-label属性を使用
-        industry_elements = element.select('div[data-label="業種"], td[data-label="業種"], span[data-label="業種"]')
+        # 方法2: h1またはh2タグの最初の文字列（業種名）を取得
+        for heading_tag in ['h1', 'h2']:
+            heading = element.find(heading_tag)
+            if heading:
+                heading_text = heading.get_text(strip=True)
+                # 改行や余分な情報を除去して最初の行のみ取得
+                first_line = heading_text.split('\n')[0].strip()
+                # 案件番号を除去
+                cleaned_title = re.sub(r'\（案件No\.\s*[A-Z]{2}\d+\）', '', first_line).strip()
+                if cleaned_title and len(cleaned_title) <= 20 and '案件' not in cleaned_title:
+                    logging.info(f"    -> Found title from {heading_tag}: {cleaned_title}")
+                    return cleaned_title
+        
+        # 方法3: メタデータからの抽出
+        # data-business-type や data-industry などの属性があれば取得
+        business_type_element = element.find('[data-business-type]')
+        if business_type_element:
+            business_type = business_type_element.get('data-business-type', '').strip()
+            if business_type:
+                logging.info(f"    -> Found title from data attribute: {business_type}")
+                return business_type
+        
+        # 方法4: 業種を含む専用要素の検索
+        industry_elements = element.select('span.industry, .business-type, .sector')
         for industry_element in industry_elements:
             title = industry_element.get_text(strip=True)
-            if title and 3 < len(title) <= 50 and '。' not in title and '業種' not in title:
-                logging.info(f"    -> Found title via data-label: {title}")
+            if title and len(title) <= 20:
+                logging.info(f"    -> Found title from industry element: {title}")
                 return title
         
-        # フォールバック2: テーブル構造での業種検索
-        table_cells = element.find_all(['td', 'th'])
-        for i, cell in enumerate(table_cells):
-            cell_text = cell.get_text(strip=True)
-            if '業種' in cell_text and len(cell_text) <= 10:  # 「業種」ラベルセル
-                # 次のセルまたは同じ行の他のセルを確認
-                next_cell = cell.find_next_sibling(['td', 'th'])
-                if next_cell:
-                    title_text = next_cell.get_text(strip=True)
-                    if title_text and 3 < len(title_text) <= 50 and '。' not in title_text:
-                        logging.info(f"    -> Found title via table structure: {title_text}")
-                        return title_text
+        # 方法5: オンデック専用のdt/dd構造での業種検索
+        data_list = element.select_one('dl.p-sell-single__data__list')
+        if data_list:
+            dt_elements = data_list.find_all('dt')
+            dd_elements = data_list.find_all('dd')
+            
+            # dt要素とdd要素をペアで処理
+            for dt, dd in zip(dt_elements, dd_elements):
+                dt_text = dt.get_text(strip=True)
+                dd_text = dd.get_text(strip=True)
+                
+                # dtに何らかの業種情報、ddにラベルという逆パターンの場合
+                if ('業' in dd_text or 'サービス' in dd_text or '事業' in dd_text) and len(dt_text) <= 20:
+                    # dtが業種名の場合
+                    if dt_text and dt_text not in ['業種', '事業内容', '業務内容']:
+                        logging.info(f"    -> Found title from dt/dd structure: {dt_text}")
+                        return dt_text
         
-        # フォールバック3: 業種キーワードを含む短いテキストを探す
+        # 方法6: 正規表現パターンマッチング
         element_text = element.get_text()
-        lines = [line.strip() for line in element_text.split('\n') if line.strip()]
         
-        industry_keywords = [
-            '運送', '物流', '配送', '輸送', '製造', '建設', 'IT', 'システム', 'ソフト', 
-            'サービス', '小売', '卸売', '医療', '介護', '教育', '飲食', '美容', '清掃', 
-            '警備', '不動産', '金融', '保険', '商社', '貿易', '農業', '漁業', '林業',
-            '印刷', '広告', 'コンサル', '人材', '派遣', '清掃', '整備', '修理'
+        # 業種名パターンの検索
+        industry_patterns = [
+            r'(建設業|運送業|製造業|IT業|サービス業|小売業|卸売業|不動産業|金融業|保険業|医療業|介護事業|教育事業|飲食業|美容業|清掃業|警備業|人材派遣業|コンサルティング業)',
+            r'([^\s]{2,10}業)(?:\s|$|（)',  # 「○○業」パターン
+            r'([^\s]{2,15}サービス)(?:\s|$|（)',  # 「○○サービス」パターン
         ]
         
-        for line in lines:
-            if (3 < len(line) <= 30 and
-                any(keyword in line for keyword in industry_keywords) and
-                deal_id.lower() not in line.lower() and
-                '百万円' not in line and '年商' not in line and '。' not in line):
-                logging.info(f"    -> Found title via industry keyword: {line}")
-                return line
+        for pattern in industry_patterns:
+            matches = re.findall(pattern, element_text)
+            if matches:
+                # 最も短い（具体的な）マッチを選択
+                best_match = min(matches, key=len) if isinstance(matches[0], str) else matches[0]
+                if best_match and len(best_match) <= 20:
+                    logging.info(f"    -> Found title from pattern matching: {best_match}")
+                    return best_match
         
-        # フォールバック4: HTMLコメントや隠し要素も確認
-        for comment in element.find_all(string=True):
-            comment_text = str(comment).strip()
-            if (3 < len(comment_text) <= 30 and
-                any(keyword in comment_text for keyword in industry_keywords)):
-                logging.info(f"    -> Found title in HTML content: {comment_text}")
-                return comment_text
-        
-        logging.warning(f"    -> Could not determine title for deal {deal_id}")
+        # 最終フォールバック
+        logging.warning(f"    -> Could not determine title for deal {deal_id}, using default")
         return "案件詳細"
     
     @staticmethod
