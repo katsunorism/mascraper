@@ -1,4 +1,4 @@
-# main29.py (完全版)
+# main.py (完全版)
 import httpx
 from bs4 import BeautifulSoup, Tag
 import gspread
@@ -1809,13 +1809,14 @@ def enhance_deals_with_details(raw_deals: List[RawDealData], site_config: Dict[s
     """詳細ページから特色情報を取得して既存データを拡張（403対策強化版）"""
     
     # 一覧ページで十分な情報が取得できるサイトは詳細ページアクセスをスキップ
-    skip_detail_sites = ["M&Aロイヤルアドバイザリー", "M&Aキャピタルパートナーズ"]
+    # M&Aロイヤルアドバイザリーを除外（特徴・強みは詳細ページにのみ存在）
+    skip_detail_sites = ["M&Aキャピタルパートナーズ"]
     
     if site_config['name'] in skip_detail_sites:
         logging.info(f"  Skipping detail page scraping for {site_config['name']} (using list page features)")
         return raw_deals
     
-    if not site_config.get('detail_page_selectors') and site_config['name'] not in ["M&A総合研究所", "ストライク"]:
+    if not site_config.get('detail_page_selectors') and site_config['name'] not in ["M&A総合研究所", "ストライク", "M&Aロイヤルアドバイザリー"]:
         logging.info(f"  No detail page selectors configured for {site_config['name']}")
         return raw_deals
     
@@ -1841,8 +1842,12 @@ def enhance_deals_with_details(raw_deals: List[RawDealData], site_config: Dict[s
                         enhanced_deals.extend(raw_deals[i-1:])
                         break
                     
+                    # M&Aロイヤルアドバイザリーの詳細ページで特徴・強み情報を取得
+                    if site_config['name'] == "M&Aロイヤルアドバイザリー":
+                        enhanced_deal = enhance_maroyal_deal_with_features(deal, scraper, anti_blocking, referer_url)
+                        enhanced_deals.append(enhanced_deal)
                     # ストライクの詳細ページで追加情報を取得
-                    if site_config['name'] == "ストライク":
+                    elif site_config['name'] == "ストライク":
                         enhanced_deal = enhance_strike_deal_with_details_protected(deal, scraper, anti_blocking, referer_url)
                         enhanced_deals.append(enhanced_deal)
                     else:
@@ -1861,8 +1866,8 @@ def enhance_deals_with_details(raw_deals: List[RawDealData], site_config: Dict[s
                         
                         enhanced_deals.append(deal)
                     
-                    # 人間らしい待機時間（ストライクの場合はより慎重に）
-                    if site_config['name'] == "ストライク":
+                    # 人間らしい待機時間（M&Aロイヤルアドバイザリーも慎重に）
+                    if site_config['name'] in ["ストライク", "M&Aロイヤルアドバイザリー"]:
                         delay = anti_blocking.get_human_like_delay(4, 10)  # 4-10秒のランダム待機
                     else:
                         delay = anti_blocking.get_human_like_delay(2, 5)   # 2-5秒のランダム待機
@@ -1881,6 +1886,131 @@ def enhance_deals_with_details(raw_deals: List[RawDealData], site_config: Dict[s
     
     logging.info(f"✅ Enhanced {len(enhanced_deals)} deals with detail information")
     return enhanced_deals
+
+
+def enhance_maroyal_deal_with_features(deal: RawDealData, scraper: 'DetailPageScraper', 
+    anti_blocking: 'AntiBlockingManager', referer_url: str) -> RawDealData:
+    """M&Aロイヤルアドバイザリーの案件に特徴・強み情報を追加"""
+    try:
+        logging.info(f"    🔍 Fetching features from M&Aロイヤルアドバイザリー detail page: {deal.link}")
+        
+        # 詳細ページにアクセス
+        success = scraper.driver.get_with_retry(deal.link, referer=referer_url, max_retries=3)
+        if not success:
+            logging.warning(f"    ⚠️ Failed to load detail page for deal {deal.deal_id}")
+            return deal
+        
+        # ページの読み込み完了を待つ
+        time.sleep(3)
+        
+        # HTMLを取得
+        soup = BeautifulSoup(scraper.driver.page_source, 'html.parser')
+        
+        # 特徴・強み情報を抽出
+        features_text = extract_maroyal_features(soup)
+        
+        if features_text:
+            deal.features_text = features_text
+            logging.info(f"    ✅ Extracted features: {features_text[:100]}...")
+        else:
+            logging.warning(f"    ⚠️ No features found for deal {deal.deal_id}")
+            
+    except Exception as e:
+        logging.error(f"    ❌ Error fetching features for deal {deal.deal_id}: {e}")
+    
+    return deal
+
+
+def extract_maroyal_features(soup: BeautifulSoup) -> str:
+    """M&Aロイヤルアドバイザリーのページから特徴・強み情報を抽出"""
+    try:
+        features_parts = []
+        
+        # パターン1: 「特徴・強み」の見出しを探す
+        feature_keywords = ['特徴・強み', '特徴', '強み', '事業概要', '事業内容']
+        
+        for keyword in feature_keywords:
+            # 見出しタグから特徴・強みを探す
+            headers = soup.find_all(['h2', 'h3', 'h4', 'h5', 'dt'], string=lambda x: x and keyword in x)
+            
+            for header in headers:
+                # 見出しの次の要素を取得
+                next_elements = []
+                current = header.find_next_sibling()
+                
+                while current and current.name not in ['h1', 'h2', 'h3', 'h4', 'h5']:
+                    if current.name in ['p', 'div', 'ul', 'li', 'dd']:
+                        text = current.get_text(strip=True)
+                        if text and len(text) > 10:  # 短すぎるテキストは除外
+                            next_elements.append(text)
+                    current = current.find_next_sibling()
+                
+                if next_elements:
+                    features_parts.extend(next_elements)
+                    break  # 最初に見つかった特徴・強みセクションを使用
+        
+        # パターン2: リスト形式の特徴を探す
+        if not features_parts:
+            # ・で始まる箇条書きを探す
+            bullet_points = []
+            for element in soup.find_all(['p', 'li', 'div']):
+                text = element.get_text(strip=True)
+                if text.startswith('・') or text.startswith('•'):
+                    bullet_points.append(text)
+            
+            if bullet_points:
+                features_parts = bullet_points
+        
+        # パターン3: テーブル形式から抽出
+        if not features_parts:
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) >= 2:
+                        header_text = cells[0].get_text(strip=True)
+                        if any(keyword in header_text for keyword in feature_keywords):
+                            content_text = cells[1].get_text(strip=True)
+                            if content_text and len(content_text) > 10:
+                                features_parts.append(content_text)
+        
+        # パターン4: div要素内のコンテンツを探す
+        if not features_parts:
+            # 特定のクラス名やID名を持つ要素を探す
+            content_areas = soup.find_all(['div', 'section'], class_=lambda x: x and any(
+                keyword in str(x).lower() for keyword in ['feature', 'strength', 'overview', 'content']
+            ))
+            
+            for area in content_areas:
+                text = area.get_text(strip=True)
+                if text and len(text) > 50:  # ある程度の長さのテキストのみ
+                    # 箇条書きに分割
+                    lines = [line.strip() for line in text.split('\n') if line.strip()]
+                    bullet_lines = [line for line in lines if line.startswith(('・', '•', '-'))]
+                    if bullet_lines:
+                        features_parts.extend(bullet_lines)
+                    elif lines:
+                        features_parts.extend(lines[:3])  # 最初の3行のみ
+        
+        # 結果をフォーマット
+        if features_parts:
+            # 重複を除去し、適切にフォーマット
+            unique_features = []
+            for feature in features_parts:
+                if feature not in unique_features and len(feature.strip()) > 5:
+                    unique_features.append(feature.strip())
+            
+            # 【特徴・強み】ヘッダーを追加
+            if unique_features:
+                formatted_features = "【特徴・強み】\n" + "\n".join(f"・ {feature}" if not feature.startswith(('・', '•')) else feature for feature in unique_features[:5])
+                return formatted_features
+        
+        return ""
+        
+    except Exception as e:
+        logging.error(f"Error extracting M&Aロイヤルアドバイザリー features: {e}")
+        return ""
 
 def enhance_strike_deal_with_details_protected(deal: RawDealData, scraper: DetailPageScraper, anti_blocking: AntiBlockingManager, referer_url: str) -> RawDealData:
     """ストライクの詳細ページから追加情報を取得（403対策強化版）"""
