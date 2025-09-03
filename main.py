@@ -1537,8 +1537,13 @@ class GSheetConnector:
     def _connect(self):
         logging.info("Connecting to Google Sheets...")
         try:
+            # 環境変数から認証情報ファイルのパスを取得
+            creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+            if not creds_path:
+                raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.")
+
             scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-            creds = Credentials.from_service_account_file(self.config['service_account_file'], scopes=scopes)
+            creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
             client = gspread.authorize(creds)
             spreadsheet = client.open_by_key(self.config['spreadsheet_id'])
             worksheet = spreadsheet.worksheet(self.config['sheet_name'])
