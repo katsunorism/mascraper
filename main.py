@@ -1,4 +1,4 @@
-# main29.py (完全版) - ストライク403エラー完全対応修正版
+# main29.py (完全版)
 import httpx
 from bs4 import BeautifulSoup, Tag
 import gspread
