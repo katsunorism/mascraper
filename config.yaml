@@ -1,0 +1,214 @@
+# Google Sheets設定
+google_sheets:
+  service_account_file: "credentials.json"
+  spreadsheet_id: "1B3cRFiAMTwCscQyLkJbS1libVjRQTyIJhZ7PRPfzcww"
+  sheet_name: "一覧"
+
+# スクレイピング基本設定
+scraping:
+  timeout: 15
+  max_retries: 3
+  retry_delay: 1
+  min_revenue: 300000000  # 3億円
+  min_profit: 30000000    # 3000万円
+
+# ログ設定
+logging:
+  level: INFO
+  file_name: scraping.log
+
+# デバッグ設定
+debug:
+  headless_mode: true
+  save_html_files: true  # デバッグのため一時的にtrue
+
+# データ変換設定
+data_conversion:
+  # 金額単位統一（百万円）
+  currency_unit: "百万円"
+  # 数値形式
+  number_format: "comma_separated"  # カンマ区切り
+  # 不要テキスト除去パターン
+  cleanup_patterns:
+    - "（応相談）"
+    - "（相談）"
+    - "応相談"
+    - "要相談"
+
+# エラーハンドリング設定
+error_handling:
+  # エラー時の継続処理
+  continue_on_error: true
+  # エラー詳細ログ
+  detailed_error_logging: true
+  # 失敗した案件の記録
+  log_failed_deals: true
+
+# サイト別設定
+sites:
+  # M&A総合研究所（修正版）
+  - name: "M&A総合研究所"
+    enabled: true
+    url: "https://masouken.com/list"  # 一覧ページのURL
+    parser_type: "masouken_specific"  # 専用パーサー指定
+    max_pages: 3
+    pagination:
+      type: "query_param"
+      param: "page"
+
+  # M&Aキャピタルパートナーズ（動作確認済み）
+  - name: "M&Aキャピタルパートナーズ"
+    enabled: true
+    url: "https://www.ma-cp.com/deal/"
+    max_pages: 3
+    pagination: 
+      type: "query_param"
+      param: "p"
+    conditions: 
+      min_revenue: 300000000    # 3億円以上
+      min_profit: 30000000      # 3千万円以上
+    parser_function: "parse_macp"
+    item_selector: 'article.c-filter-project'
+    data_selectors:
+      案件ID: 'p.c-filter-project__no'
+      タイトル: 'h4.c-filter-project__ttl'
+      所在地: "dl.c-filter-project__dataList dt:contains('所在地') + dd"
+      売上高: "dl.c-filter-project__dataList dt:contains('概算売上') + dd"
+      営業利益: "dl.c-filter-project__dataList dt:contains('営業利益') + dd"
+      希望金額: "dl.c-filter-project__dataList dt:contains('希望金額') + dd"
+      リンク: 'a.c-cta'
+    detail_page_selectors:
+      features:
+        start_keywords: ["事業概要", "事業内容", "特色", "業務内容"]
+        end_tag: "h4"
+        target_tags: ["p", "ul", "div", "li"]
+
+  # M&Aロイヤルアドバイザリー（完全修正版）
+  - name: "M&Aロイヤルアドバイザリー"
+    enabled: true
+    url: "https://ma-la.co.jp/case/"
+    max_pages: 3
+    pagination: 
+      type: "path"
+      path: "page/{page_num}/"
+    conditions: 
+      min_revenue: 300000000    # 3億円以上
+      min_profit: 30000000      # 3千万円以上
+    parser_function: "parse_maroyal"
+    item_selector: 'li.p-case__unit'
+    data_selectors:
+      案件ID: 'p.p-case__no span:nth-of-type(2)'
+      タイトル: 'h2.p-case__ttl'
+      リンク: 'a'
+
+  # ストライク
+  - name: "ストライク"
+    enabled: true
+    url: "https://www.strike.co.jp/smart/smart_search.html?issearch=on"
+    parser_type: "strike_special"
+    max_pages: 1
+    # ストライク専用設定
+    strike_config:
+      item_selector: "div.search-result__item"
+      deal_number_selector: "p.search-result__num"
+      revenue_patterns:
+        - "5～10億円"
+        - "10～50億円" 
+        - "50～100億円"
+        - "100億円超"
+      detail_url_template: "https://www.strike.co.jp/smart/smart_detail.html?id={deal_id}"
+    # 詳細ページ設定
+    detail_page_selectors:
+      deal_id: "span.detail__num"
+      title: "h2.section-ttl > span"
+      location_list: "ul.detail__list"
+      features:
+        business_overview: "事業概要"
+        strengths: "特徴・強み"
+
+  # 日本M&Aセンター
+  - name: "日本M&Aセンター"
+    enabled: true
+    url: "https://www.nihon-ma.co.jp/anken/needs_convey.php"
+    max_pages: 3
+    pagination:
+      type: "query_param"
+      param: "p"
+    parser_type: "nihon_ma_center"
+    item_selector: "div.anken_list_item"  # 推測値、実際のHTMLに合わせて調整
+    data_selectors:
+      案件ID: ".anken_no"
+      タイトル: ".anken_title"
+      売上高: ".sales_amount"
+      リンク: "a.detail_link"
+    detail_page_selectors:
+      実態営業利益: ".profit_amount"
+      特色: ".features"
+      所在地: ".location"
+      価格: ".price"
+
+  # インテグループ
+    name: "インテグループ"
+    enabled: true
+    base_url: "https://www.integroup.jp/sell/"
+    max_pages: 3
+    revenue_filter:
+      exclude_patterns:
+        - "～１億円"
+        - "１～５億円"
+      include_patterns:
+        - "５億円以上"
+        - "５～１０億円"
+        - "１０～３０億円"
+        - "３０億円以上"
+    wait_time:
+      between_pages: 2  # ページ間の待機時間（秒）
+      between_requests: 1  # リクエスト間の待機時間（秒）
+
+  # NEWOLD CAPITAL
+    newold_capital:
+    # 有効/無効
+    enabled: true
+    # 最大ページ数（一覧は1ページのみ）
+    max_pages: 1
+    # ベースURL
+    base_url: "https://newold.co.jp/anken/"
+    # 売上高フィルタリング（3億円以上）
+    revenue_filter:
+      enabled: true
+      minimum_amount: 3  # 億円
+      valid_patterns:
+        - "3億円～5億円"
+        - "5億円～10億円"
+    # 営業利益フィルタリング（3,000万円以上）
+    profit_filter:
+      enabled: true
+      minimum_amount: 3000  # 万円
+
+  # オンデック
+  - name: "オンデック"
+    enabled: true
+    base_url: "https://www.ondeck.jp/sell"
+    max_pages: 3
+    pagination:
+      type: "path"
+      path: "page/{page_num}/"
+    revenue_filter:
+      min_amount: 300  # 300百万円以上
+    profit_filter:
+      min_amount: 30   # 30百万円以上
+
+  # 既存の設定は保持し、以下を追加
+    filtering_criteria:
+      日本M&Aセンター:
+        min_revenue_oku: 5    # 5億円以上
+        min_profit_man: 5000  # 5,000万円以上
+      インテグループ:
+        min_revenue_oku: 5    # 5億円以上（実際は除外パターンで制御）
+        min_profit_man: 0     # 利益条件なし
+      NEWOLD CAPITAL:
+        min_revenue_oku: 3    # 3億円以上
+        min_profit_man: 3000  # 3,000万円以上
+      オンデック:
+        min_revenue_oku: 3    # 3億円以上
+        min_profit_man: 3000  # 3,000万円以上
