@@ -1,4 +1,4 @@
-# main3.py - 日本M&Aセンター＆インテグループ＆NEWOLD CAPITAL＆オンデック専用スクレイピング（httpx版）
+# main3.py - 日本M&Aセンター＆インテグループ＆NEWOLD CAPITAL＆オンデック専用スクレイピング
 import httpx
 from bs4 import BeautifulSoup, Tag
 import gspread
