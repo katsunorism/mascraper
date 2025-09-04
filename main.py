@@ -1,4 +1,4 @@
-# main.py (完全版)
+# main.py (完全版 - 修正済み)
 import httpx
 from bs4 import BeautifulSoup, Tag
 import gspread
@@ -118,8 +118,9 @@ class DataConverter:
             return 0
         multipliers = {'億': 100_000_000, '千万': 10_000_000, '百万': 1_000_000, '万': 10_000}
         for unit, multiplier in multipliers.items():
-            value *= multiplier
-            break
+            if unit in text:
+                value *= multiplier
+                break
         return int(value)
     
     @staticmethod
@@ -224,25 +225,6 @@ class AntiBlockingManager:
                 return True
         
         return False
-    
-    def get_human_like_headers(self, referer_url: str = None) -> Dict[str, str]:
-        """人間らしいHTTPヘッダーを生成"""
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'same-origin'
-        }
-        
-        if referer_url:
-            headers['Referer'] = referer_url
-        
-        return headers
 
 class WebDriverManager:
     """WebDriverの管理クラス（403対策強化版）"""
@@ -271,18 +253,25 @@ class WebDriverManager:
         user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         chrome_options.add_argument(f"--user-agent={user_agent}")
         
-        self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-        
-        # WebDriverの自動化検出を回避
-        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
-        logging.info("✅ WebDriver initialized successfully with anti-blocking measures.")
-        return self.driver
+        try:
+            self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+            
+            # WebDriverの自動化検出を回避
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            logging.info("✅ WebDriver initialized successfully with anti-blocking measures.")
+            return self.driver
+        except Exception as e:
+            logging.error(f"Failed to initialize WebDriver: {e}")
+            raise
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.driver:
-            self.driver.quit()
-            logging.info("WebDriver has been closed.")
+            try:
+                self.driver.quit()
+                logging.info("WebDriver has been closed.")
+            except Exception as e:
+                logging.error(f"Error closing WebDriver: {e}")
 
 class DetailPageScraper:
     """詳細ページのスクレイピングを専門に行うクラス（403対策強化版）"""
@@ -366,7 +355,7 @@ class DetailPageScraper:
             if 'masouken.com' in detail_url:
                 return self._fetch_masouken_features(detail_soup)
             
-            # ストライクの特別処理（完全修正版）
+            # ストライクの特別処理
             if 'strike.co.jp' in detail_url:
                 return self._fetch_strike_features_enhanced(detail_soup, detail_url)
             
@@ -380,10 +369,6 @@ class DetailPageScraper:
             logging.error(f"    -> Error parsing detail page: {e}")
             logging.debug(traceback.format_exc())
             return "-"
-
-    def fetch_features(self, detail_url: str, selectors: Dict[str, Any]) -> str:
-        """後方互換性のための従来メソッド"""
-        return self.fetch_features_with_blocking_protection(detail_url, selectors)
 
     def _fetch_strike_features_enhanced(self, detail_soup: BeautifulSoup, detail_url: str) -> str:
         """ストライク専用の特色抽出（完全修正版）"""
@@ -774,40 +759,52 @@ class UniversalParser:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
         
-        # 案件アイテムを抽出
-        items = soup.select('div.search-result__item')
+        # 案件アイテムを抽出（より柔軟なセレクター）
+        selectors_to_try = [
+            'div.search-result__item',
+            'div[class*="search-result"]',
+            'div[class*="item"]',
+            'div[class*="case"]',
+            'article',
+            'li'
+        ]
+        
+        items = []
+        for selector in selectors_to_try:
+            items = soup.select(selector)
+            if items:
+                logging.info(f"Found {len(items)} items using selector: {selector}")
+                break
         
         if not items:
-            logging.info("    -> No items found with selector")
+            logging.warning("No items found with any selector")
             return []
-        
-        logging.info(f"    -> Found {len(items)} Strike items")
         
         # 上から52件を対象（14行×3案件/行）
         items_to_process = items[:52]
         
         for i, item in enumerate(items_to_process):
             try:
-                logging.info(f"    -> Processing item {i+1}/{len(items_to_process)}")
+                logging.info(f"Processing item {i+1}/{len(items_to_process)}")
                 
-                # 案件番号の抽出
-                deal_id = UniversalParser._extract_strike_deal_id(item)
+                # 案件番号の抽出（より柔軟に）
+                deal_id = UniversalParser._extract_strike_deal_id_flexible(item)
                 if not deal_id:
-                    logging.info(f"    -> No deal ID found in item {i+1}, skipping")
+                    logging.info(f"No deal ID found in item {i+1}, skipping")
                     continue
                 
-                logging.info(f"    -> Found deal ID: {deal_id}")
+                logging.info(f"Found deal ID: {deal_id}")
                 
                 # 売上高の抽出とフィルタリング
-                revenue_text = UniversalParser._extract_strike_revenue(item)
+                revenue_text = UniversalParser._extract_strike_revenue_flexible(item)
                 
                 # 売上高フィルタリング：指定された4パターンのみ詳細ページに進む
                 valid_revenues = ["5～10億円", "10～50億円", "50～100億円", "100億円超"]
                 if revenue_text not in valid_revenues:
-                    logging.info(f"    -> Skipping deal {deal_id}: Revenue '{revenue_text}' doesn't meet criteria")
+                    logging.info(f"Skipping deal {deal_id}: Revenue '{revenue_text}' doesn't meet criteria")
                     continue
                 
-                logging.info(f"    -> Revenue meets criteria: {revenue_text}")
+                logging.info(f"Revenue meets criteria: {revenue_text}")
                 
                 # タイトルの抽出（詳細ページで取得するため、ここでは仮のタイトル）
                 title = f"ストライク案件_{deal_id}"
@@ -815,43 +812,49 @@ class UniversalParser:
                 # 詳細ページのリンクを構築
                 link = f"https://www.strike.co.jp/smart/sell_details.html?code={deal_id}"
                 
-                # データ作成（詳細情報は詳細ページで取得）
+                # データ作成
                 deal_data = RawDealData(
                     site_name=site_config['name'],
                     deal_id=deal_id,
                     title=title,
                     link=link,
-                    location_text="",  # 詳細ページで取得
+                    location_text="",
                     revenue_text=revenue_text,
-                    profit_text="-",  # ストライクは常に"-"
-                    price_text="-",   # ストライクは常に"-"
-                    features_text=""  # 詳細ページで取得
+                    profit_text="-",
+                    price_text="-",
+                    features_text=""
                 )
                 
                 results.append(deal_data)
-                logging.info(f"    -> Successfully extracted deal: {deal_id}")
+                logging.info(f"Successfully extracted deal: {deal_id}")
                 
             except Exception as e:
-                logging.error(f"    -> Error parsing ストライク item {i+1}: {e}")
-                logging.debug(traceback.format_exc())
+                logging.error(f"Error parsing ストライク item {i+1}: {e}")
                 continue
         
-        logging.info(f"    -> ストライク: Successfully extracted {len(results)} deals meeting criteria")
+        logging.info(f"ストライク: Successfully extracted {len(results)} deals meeting criteria")
         return results
 
     @staticmethod
-    def _extract_strike_deal_id(item: Tag) -> str:
-        """ストライクの案件IDを抽出"""
-        # p.search-result__numから抽出
-        num_element = item.select_one('p.search-result__num')
-        if num_element:
-            text = num_element.get_text(strip=True)
-            # SS番号を抽出
-            ss_match = re.search(r'(SS\d+)', text)
-            if ss_match:
-                return ss_match.group(1)
+    def _extract_strike_deal_id_flexible(item: Tag) -> str:
+        """ストライクの案件IDを柔軟に抽出"""
+        # アプローチ1: 標準的なセレクター
+        selectors_to_try = [
+            'p.search-result__num',
+            '.search-result__num',
+            '[class*="num"]',
+            '[class*="id"]'
+        ]
         
-        # フォールバック: テキスト全体からSS番号を検索
+        for selector in selectors_to_try:
+            num_element = item.select_one(selector)
+            if num_element:
+                text = num_element.get_text(strip=True)
+                ss_match = re.search(r'(SS\d+)', text)
+                if ss_match:
+                    return ss_match.group(1)
+        
+        # アプローチ2: テキスト全体からSS番号を検索
         item_text = item.get_text()
         ss_match = re.search(r'(SS\d+)', item_text)
         if ss_match:
@@ -860,14 +863,22 @@ class UniversalParser:
         return ""
 
     @staticmethod
-    def _extract_strike_revenue(item: Tag) -> str:
-        """ストライクの売上高を抽出"""
-        # span.sales-amountから抽出
-        sales_element = item.select_one('span.sales-amount')
-        if sales_element:
-            return sales_element.get_text(strip=True)
+    def _extract_strike_revenue_flexible(item: Tag) -> str:
+        """ストライクの売上高を柔軟に抽出"""
+        # アプローチ1: 標準的なセレクター
+        selectors_to_try = [
+            'span.sales-amount',
+            '.sales-amount',
+            '[class*="sales"]',
+            '[class*="amount"]'
+        ]
         
-        # フォールバック: テキスト全体から売上高パターンを検索
+        for selector in selectors_to_try:
+            sales_element = item.select_one(selector)
+            if sales_element:
+                return sales_element.get_text(strip=True)
+        
+        # アプローチ2: テキスト全体から売上高パターンを検索
         item_text = item.get_text()
         revenue_patterns = [
             r'5～10億円', r'5〜10億円',
@@ -886,7 +897,7 @@ class UniversalParser:
     
     @staticmethod
     def _parse_ma_capital_partners(site_config: Dict[str, Any], html_content: str) -> List[RawDealData]:
-        """M&Aキャピタルパートナーズ専用パーサー（完全修正版）"""
+        """M&Aキャピタルパートナーズ専用パーサー（柔軟性向上版）"""
         soup = BeautifulSoup(html_content, 'lxml')
         results = []
         
@@ -898,54 +909,52 @@ class UniversalParser:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
         
-        # 案件リストを抽出
-        items = soup.select('article.c-filter-project')
+        # 案件リストを抽出（より柔軟なセレクター）
+        selectors_to_try = [
+            'article.c-filter-project',
+            'article[class*="project"]',
+            'div[class*="project"]',
+            'div[class*="case"]',
+            'article',
+            'li[class*="item"]'
+        ]
+        
+        items = []
+        for selector in selectors_to_try:
+            items = soup.select(selector)
+            if items:
+                logging.info(f"Found {len(items)} items using selector: {selector}")
+                break
         
         if not items:
-            logging.info("    -> No items found with standard selector")
+            logging.warning("No items found with any selector")
             return []
-        
-        logging.info(f"    -> Found {len(items)} items")
         
         for i, item in enumerate(items):
             try:
-                logging.info(f"    -> Processing item {i+1}/{len(items)}")
+                logging.info(f"Processing item {i+1}/{len(items)}")
                 
-                # 案件番号の抽出
-                deal_no_element = item.select_one('.c-filter-project__no')
-                if not deal_no_element:
-                    logging.info(f"    -> No deal number found in item {i+1}, skipping")
+                # 案件番号の抽出（より柔軟に）
+                deal_id = UniversalParser._extract_ma_capital_deal_id_flexible(item)
+                if not deal_id:
+                    logging.info(f"No deal number found in item {i+1}, skipping")
                     continue
                 
-                deal_no_text = deal_no_element.get_text(strip=True)
-                deal_match = re.search(r'案件No[：:\s]*([A-Z0-9-]+)', deal_no_text)
-                if not deal_match:
-                    logging.info(f"    -> Could not extract deal ID from: {deal_no_text}")
-                    continue
-                
-                deal_id = deal_match.group(1)
-                logging.info(f"    -> Found deal ID: {deal_id}")
+                logging.info(f"Found deal ID: {deal_id}")
                 
                 # タイトルの抽出
-                title_element = item.select_one('.c-filter-project__ttl')
-                title = title_element.get_text(strip=True) if title_element else f"M&A案件_{deal_id}"
-                logging.info(f"    -> Found title: {title[:50]}...")
+                title = UniversalParser._extract_ma_capital_title_flexible(item, deal_id)
                 
                 # リンクの抽出
-                link_element = item.select_one('a.c-cta.c-button--arrow')
-                if link_element:
-                    href = link_element.get('href', '')
-                    link = href if href.startswith('http') else f"https://www.ma-cp.com{href}"
-                else:
-                    link = f"https://www.ma-cp.com/deal/{deal_id}/"
+                link = UniversalParser._extract_ma_capital_link_flexible(item, deal_id)
                 
                 # 財務情報の抽出
-                revenue_text = UniversalParser._extract_ma_capital_dl_data(item, '概算売上')
-                profit_text = UniversalParser._extract_ma_capital_dl_data(item, '営業利益')
-                location_text = UniversalParser._extract_ma_capital_dl_data(item, '所在地')
-                price_text = UniversalParser._extract_ma_capital_dl_data(item, '希望金額')
+                revenue_text = UniversalParser._extract_ma_capital_dl_data_flexible(item, ['概算売上', '売上高', '売上'])
+                profit_text = UniversalParser._extract_ma_capital_dl_data_flexible(item, ['営業利益', '利益'])
+                location_text = UniversalParser._extract_ma_capital_dl_data_flexible(item, ['所在地', 'エリア', '地域'])
+                price_text = UniversalParser._extract_ma_capital_dl_data_flexible(item, ['希望金額', '譲渡希望価格', '価格'])
                 
-                logging.info(f"    -> Revenue: {revenue_text}, Profit: {profit_text}")
+                logging.info(f"Revenue: {revenue_text}, Profit: {profit_text}")
                 
                 # 財務条件チェック
                 revenue_value = DataConverter.parse_financial_value(revenue_text)
@@ -955,11 +964,11 @@ class UniversalParser:
                 min_profit = CONFIG.get('scraping', {}).get('min_profit', 30000000)
                 
                 if revenue_value < min_revenue or profit_value < min_profit:
-                    logging.info(f"    -> Skipping deal {deal_id}: doesn't meet financial criteria")
+                    logging.info(f"Skipping deal {deal_id}: doesn't meet financial criteria")
                     continue
                 
-                # 事業内容の抽出（完全修正版）
-                features_text = UniversalParser._extract_ma_capital_business_content(item)
+                # 事業内容の抽出
+                features_text = UniversalParser._extract_ma_capital_business_content_flexible(item)
                 
                 # データ作成
                 deal_data = RawDealData(
@@ -975,96 +984,317 @@ class UniversalParser:
                 )
                 
                 results.append(deal_data)
-                logging.info(f"    -> Successfully extracted deal: {deal_id} - {title[:50]}")
+                logging.info(f"Successfully extracted deal: {deal_id} - {title[:50]}")
                 
             except Exception as e:
-                logging.error(f"    -> Error parsing M&Aキャピタルパートナーズ item {i+1}: {e}")
-                logging.debug(traceback.format_exc())
+                logging.error(f"Error parsing M&Aキャピタルパートナーズ item {i+1}: {e}")
                 continue
         
-        logging.info(f"    -> M&Aキャピタルパートナーズ: Successfully extracted {len(results)} deals meeting criteria")
+        logging.info(f"M&Aキャピタルパートナーズ: Successfully extracted {len(results)} deals")
         return results
     
     @staticmethod
-    def _extract_ma_capital_dl_data(item: Tag, field_name: str) -> str:
-        """M&Aキャピタルパートナーズのdl要素からデータを抽出"""
+    def _extract_ma_capital_deal_id_flexible(item: Tag) -> str:
+        """M&Aキャピタルパートナーズの案件IDを柔軟に抽出"""
+        # アプローチ1: 標準的なセレクター
+        selectors_to_try = [
+            '.c-filter-project__no',
+            '[class*="no"]',
+            '[class*="id"]',
+            '[class*="num"]'
+        ]
+        
+        for selector in selectors_to_try:
+            deal_no_element = item.select_one(selector)
+            if deal_no_element:
+                deal_no_text = deal_no_element.get_text(strip=True)
+                deal_match = re.search(r'案件No[：:\s]*([A-Z0-9-]+)', deal_no_text)
+                if deal_match:
+                    return deal_match.group(1)
+        
+        # アプローチ2: テキスト全体から案件番号を検索
+        item_text = item.get_text()
+        patterns = [
+            r'案件No[：:\s]*([A-Z0-9-]+)',
+            r'案件番号[：:\s]*([A-Z0-9-]+)',
+            r'No[：:\s]*([A-Z0-9-]+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, item_text)
+            if match:
+                return match.group(1)
+        
+        return ""
+
+    @staticmethod
+    def _extract_ma_capital_title_flexible(item: Tag, deal_id: str) -> str:
+        """M&Aキャピタルパートナーズのタイトルを柔軟に抽出"""
+        selectors_to_try = [
+            '.c-filter-project__ttl',
+            '[class*="ttl"]',
+            '[class*="title"]',
+            'h1', 'h2', 'h3'
+        ]
+        
+        for selector in selectors_to_try:
+            title_element = item.select_one(selector)
+            if title_element:
+                title_text = title_element.get_text(strip=True)
+                if title_text and len(title_text) > 5:
+                    return title_text
+        
+        return f"M&A案件_{deal_id}"
+
+    @staticmethod
+    def _extract_ma_capital_link_flexible(item: Tag, deal_id: str) -> str:
+        """M&Aキャピタルパートナーズのリンクを柔軟に抽出"""
+        selectors_to_try = [
+            'a.c-cta.c-button--arrow',
+            'a[class*="cta"]',
+            'a[class*="button"]',
+            'a[href*="deal"]',
+            'a'
+        ]
+        
+        for selector in selectors_to_try:
+            link_element = item.select_one(selector)
+            if link_element:
+                href = link_element.get('href', '')
+                if href:
+                    link = href if href.startswith('http') else f"https://www.ma-cp.com{href}"
+                    return link
+        
+        return f"https://www.ma-cp.com/deal/{deal_id}/"
+
+    @staticmethod
+    def _extract_ma_capital_dl_data_flexible(item: Tag, field_names: List[str]) -> str:
+        """M&Aキャピタルパートナーズのdl要素からデータを柔軟に抽出"""
+        # アプローチ1: 標準的なdl構造
         dl_elements = item.select('dl.c-filter-project__dataList')
         for dl in dl_elements:
-            dt = dl.select_one('dt.c-filter-project__dataList__ttl')
-            dd = dl.select_one('dd.c-filter-project__dataList__data')
+            dt = dl.select_one('dt')
+            dd = dl.select_one('dd')
             
             if dt and dd:
                 dt_text = dt.get_text(strip=True)
-                if dt_text == field_name:
-                    return dd.get_text(strip=True)
+                for field_name in field_names:
+                    if field_name in dt_text:
+                        return dd.get_text(strip=True)
+        
+        # アプローチ2: 全てのdl要素を検索
+        all_dl_elements = item.select('dl')
+        for dl in all_dl_elements:
+            dt = dl.select_one('dt')
+            dd = dl.select_one('dd')
+            
+            if dt and dd:
+                dt_text = dt.get_text(strip=True)
+                for field_name in field_names:
+                    if field_name in dt_text:
+                        return dd.get_text(strip=True)
+        
+        # アプローチ3: テキスト全体から抽出
+        item_text = item.get_text()
+        for field_name in field_names:
+            pattern = rf'{field_name}[：:\s]*([^\n]+)'
+            match = re.search(pattern, item_text)
+            if match:
+                return match.group(1).strip()
         
         return ""
-    
+
     @staticmethod
-    def _extract_ma_capital_business_content(item: Tag) -> str:
-        """M&Aキャピタルパートナーズの事業内容を抽出（完全修正版）"""
+    def _extract_ma_capital_business_content_flexible(item: Tag) -> str:
+        """M&Aキャピタルパートナーズの事業内容を柔軟に抽出"""
         features_sections = []
         
-        # 事業内容セクションを探す
-        business_blocks = item.select('div.c-filter-project__listBlock')
+        # アプローチ1: 標準的なブロック構造
+        selectors_to_try = [
+            'div.c-filter-project__listBlock',
+            'div[class*="listBlock"]',
+            'div[class*="content"]',
+            'div[class*="detail"]'
+        ]
+        
+        business_blocks = []
+        for selector in selectors_to_try:
+            business_blocks = item.select(selector)
+            if business_blocks:
+                break
         
         for block in business_blocks:
             # ラベルを確認
-            label_element = block.select_one('h5.c-filter-project__label')
+            label_selectors = [
+                'h5.c-filter-project__label',
+                'h5[class*="label"]',
+                'h4', 'h5', 'h6',
+                '[class*="label"]'
+            ]
+            
+            label_element = None
+            for label_selector in label_selectors:
+                label_element = block.select_one(label_selector)
+                if label_element:
+                    break
+            
             if not label_element:
                 continue
             
             label_text = label_element.get_text(strip=True)
             
-            # 事業内容のセクションのみを処理（業種は除外）
-            if label_text == '事業内容':
-                lists_element = block.select_one('div.c-filter-project__lists')
+            # 事業内容、事業概要、特徴などのセクションを処理
+            if any(keyword in label_text for keyword in ['事業内容', '事業概要', '特徴', '概要']):
+                # コンテンツを抽出
+                content_selectors = [
+                    'div.c-filter-project__lists',
+                    'div[class*="lists"]',
+                    'div[class*="content"]',
+                    'p', 'div'
+                ]
+                
+                lists_element = None
+                for content_selector in content_selectors:
+                    lists_element = block.select_one(content_selector)
+                    if lists_element:
+                        break
+                
                 if lists_element:
-                    content = lists_element.get_text(strip=True)
-                    
                     # HTMLの<br>タグを改行に変換
                     html_content = str(lists_element)
                     content_with_breaks = re.sub(r'<br\s*/?>', '\n', html_content)
                     clean_soup = BeautifulSoup(content_with_breaks, 'html.parser')
-                    formatted_content = clean_soup.get_text(strip=True)
+                    raw_content = clean_soup.get_text()
                     
-                    if formatted_content:
-                        # 改行で分割して箇条書き形式に整形
-                        lines = [line.strip() for line in formatted_content.split('\n') if line.strip()]
+                    if raw_content:
+                        # 最終クレンジング処理を適用
+                        cleaned_content = UniversalParser._clean_extracted_text_flexible(raw_content, label_text)
                         
-                        if len(lines) == 1 and not lines[0].startswith('・'):
-                            # 単一行の場合はそのまま使用
-                            features_sections.append(f"【{label_text}】\n{lines[0]}")
-                        else:
-                            # 複数行の場合は箇条書きとして整形
-                            formatted_lines = []
-                            for line in lines:
-                                if not line.startswith('・'):
-                                    line = f"・{line}"
-                                formatted_lines.append(line)
-                            
-                            if formatted_lines:
-                                features_sections.append(f"【{label_text}】\n" + '\n'.join(formatted_lines))
+                        if cleaned_content:
+                            features_sections.append(cleaned_content)
         
         return '\n\n'.join(features_sections) if features_sections else ""
-    
+
+    @staticmethod
+    def _clean_extracted_text_flexible(raw_text: str, label_text: str) -> str:
+        """抽出後テキストの柔軟なクレンジング処理"""
+        if not raw_text:
+            return ""
+        
+        # 1. 全体の先頭と末尾の空白を完全除去
+        cleaned_text = raw_text.strip()
+        
+        # 2. 各行の先頭と末尾の空白を除去し、空行を除去
+        lines = []
+        for line in cleaned_text.split('\n'):
+            stripped_line = line.strip()
+            if stripped_line:  # 空行は除外
+                lines.append(stripped_line)
+        
+        if not lines:
+            return ""
+        
+        # 3. 無関係なデータのフィルタリング（より柔軟に）
+        filtered_lines = []
+        
+        for line in lines:
+            # 明らかに無関係なデータを除外
+            unwanted_patterns = [
+                r'所在地[：:]', r'業種[：:]', r'従業員数[：:]', r'設立[：:]', r'資本金[：:]',
+                r'売上高[：:]', r'営業利益[：:]', r'希望金額[：:]', r'案件No[：:]'
+            ]
+            
+            skip_line = False
+            for pattern in unwanted_patterns:
+                if re.search(pattern, line):
+                    skip_line = True
+                    break
+            
+            if not skip_line:
+                filtered_lines.append(line)
+        
+        # 4. サブセクション（【特徴】など）の処理
+        final_lines = []
+        has_subsections = any('【' in line and '】' in line for line in filtered_lines)
+        
+        if has_subsections:
+            # サブセクションがある場合はそのまま保持
+            final_lines = filtered_lines
+        else:
+            # サブセクションがない場合はラベルを付与
+            if label_text and filtered_lines:
+                final_lines = [f"【{label_text}】"] + filtered_lines
+        
+        # 5. 最終的な整形
+        if final_lines:
+            result = '\n'.join(final_lines)
+            
+            # 連続する改行を単一化（3つ以上の改行を2つに）
+            result = re.sub(r'\n{3,}', '\n\n', result)
+            
+            # 最終的な前後の空白除去
+            result = result.strip()
+            
+            return result
+        
+        return ""
+        
     @staticmethod
     def _parse_selector_based(site_config: Dict[str, Any], html_content: str) -> List[RawDealData]:
-        """セレクターベースの標準パーサー"""
+        """セレクターベースの標準パーサー（柔軟性向上版）"""
         soup = BeautifulSoup(html_content, 'lxml')
-        items = soup.select(site_config.get('item_selector', ''))
+        
+        # より柔軟なアイテムセレクター
+        item_selectors = [
+            site_config.get('item_selector', ''),
+            'article',
+            'div[class*="item"]',
+            'li[class*="item"]',
+            'div[class*="case"]',
+            'div[class*="project"]',
+            'tr'
+        ]
+        
+        items = []
+        for selector in item_selectors:
+            if selector:
+                items = soup.select(selector)
+                if items:
+                    logging.info(f"Found {len(items)} items using selector: {selector}")
+                    break
+        
+        if not items:
+            logging.warning("No items found with any selector")
+            return []
+        
         results = []
         
         for item in items:
             data = {'site_name': site_config['name']}
             
-            # 基本データの抽出
+            # 基本データの抽出（より柔軟に）
             for jp_key, selector in site_config.get('data_selectors', {}).items():
                 en_key = Constants.JAPANESE_TO_ENGLISH_FIELDS.get(jp_key)
                 if not en_key:
                     continue
                 
-                element = item.select_one(selector)
+                # 複数のセレクターを試行
+                element = None
+                selectors_to_try = [selector]
+                
+                # 代替セレクターを生成
+                if '[class*=' in selector:
+                    # クラス名の一部マッチングを試行
+                    class_part = re.search(r'\[class\*="([^"]+)"\]', selector)
+                    if class_part:
+                        alt_selector = f'[class*="{class_part.group(1)}"]'
+                        selectors_to_try.append(alt_selector)
+                
+                for try_selector in selectors_to_try:
+                    element = item.select_one(try_selector)
+                    if element:
+                        break
+                
                 text_content = element.get_text(strip=True) if element else ""
                 
                 if en_key == Constants.FIELD_LINK and element:
@@ -1078,9 +1308,9 @@ class UniversalParser:
             
             # 追加のDL要素処理（M&Aロイヤル用）
             if site_config['name'] == "M&Aロイヤルアドバイザリー":
-                UniversalParser._extract_dl_elements(item, data)
+                UniversalParser._extract_dl_elements_flexible(item, data)
                 # 特色の詳細抽出
-                enhanced_features = UniversalParser._extract_enhanced_features(item)
+                enhanced_features = UniversalParser._extract_enhanced_features_flexible(item)
                 if enhanced_features and enhanced_features != "-":
                     data['features_text'] = enhanced_features
             
@@ -1088,10 +1318,10 @@ class UniversalParser:
                 results.append(RawDealData(**{k: v for k, v in data.items() if k in {f.name for f in fields(RawDealData)}}))
         
         return results
-    
+
     @staticmethod
     def _parse_masouken_text_based(site_config: Dict[str, Any], html_content: str) -> List[RawDealData]:
-        """M&A総合研究所専用の改良版テキストベースパーサー"""
+        """M&A総合研究所専用の改良版テキストベースパーサー（柔軟性向上版）"""
         results = []
         
         # デバッグ用: HTMLファイル保存
@@ -1105,47 +1335,62 @@ class UniversalParser:
         # BeautifulSoupでパース
         soup = BeautifulSoup(html_content, 'lxml')
         
-        # 一覧ページの案件リストを抽出
-        deal_items = soup.find_all('li', class_='p-projects-index__item')
+        # より柔軟なセレクターを試行
+        deal_selectors = [
+            'li.p-projects-index__item',
+            'li[class*="project"]',
+            'div[class*="project"]',
+            'div[class*="case"]',
+            'article',
+            'li[class*="item"]',
+            'div[class*="item"]'
+        ]
+        
+        deal_items = []
+        for selector in deal_selectors:
+            deal_items = soup.select(selector)
+            if deal_items:
+                logging.info(f"Found {len(deal_items)} items using selector: {selector}")
+                break
         
         if deal_items:
-            logging.info(f"    -> Found {len(deal_items)} deal items using HTML selector")
-            
             for item in deal_items:
                 try:
-                    # 案件IDを抽出
-                    id_element = item.find('span', class_='c-projects-feed__number')
-                    if not id_element:
+                    # より柔軟な案件ID抽出
+                    id_patterns = [
+                        r'案件ID[：:\s]*(\d+)',
+                        r'案件番号[：:\s]*(\d+)',
+                        r'ID[：:\s]*(\d+)',
+                        r'No[：:\s]*(\d+)'
+                    ]
+                    
+                    deal_id = None
+                    item_text = item.get_text()
+                    
+                    for pattern in id_patterns:
+                        match = re.search(pattern, item_text)
+                        if match:
+                            deal_id = match.group(1)
+                            break
+                    
+                    if not deal_id:
                         continue
                     
-                    id_text = id_element.get_text(strip=True)
-                    id_match = re.search(r'案件ID[：:\s]*(\d+)', id_text)
-                    if not id_match:
-                        continue
+                    # タイトル抽出の改善
+                    title_selectors = ['h1', 'h2', 'h3', '.title', '[class*="title"]', '[class*="ttl"]']
+                    title = f"M&A案件_{deal_id}"
                     
-                    deal_id = id_match.group(1)
+                    for selector in title_selectors:
+                        title_elem = item.select_one(selector)
+                        if title_elem:
+                            title_text = title_elem.get_text(strip=True)
+                            if title_text and len(title_text) > 5:
+                                title = title_text
+                                break
                     
-                    # タイトルを抽出
-                    title_element = item.find('h2')
-                    title = title_element.get_text(strip=True) if title_element else f"M&A案件_{deal_id}"
-                    
-                    # 売上高と営業利益を抽出してフィルタリング
-                    revenue_text = ""
-                    profit_text = ""
-                    
-                    detail_elements = item.find_all('li', class_='c-projects-feed__detail')
-                    for detail in detail_elements:
-                        heading = detail.find('p', class_='heading')
-                        if heading:
-                            heading_text = heading.get_text(strip=True)
-                            value_p = heading.find_next_sibling('p')
-                            if value_p:
-                                value_text = value_p.get_text(strip=True)
-                                
-                                if heading_text == '売上高':
-                                    revenue_text = value_text
-                                elif heading_text == '営業利益':
-                                    profit_text = value_text
+                    # 財務情報の抽出（より柔軟に）
+                    revenue_text = UniversalParser._extract_financial_info_flexible(item_text, ['売上高', '売上'])
+                    profit_text = UniversalParser._extract_financial_info_flexible(item_text, ['営業利益', '利益'])
                     
                     # 財務条件チェック
                     revenue_value = DataConverter.parse_financial_value(revenue_text)
@@ -1155,36 +1400,14 @@ class UniversalParser:
                     min_profit = CONFIG.get('scraping', {}).get('min_profit', 30000000)
                     
                     if revenue_value < min_revenue or profit_value < min_profit:
-                        logging.info(f"    -> Skipping deal {deal_id}: Revenue={revenue_value:,}, Profit={profit_value:,}")
                         continue
                     
-                    # その他の情報を抽出
-                    location_text = ""
-                    price_text = ""
+                    # その他の情報
+                    location_text = UniversalParser._extract_location_flexible(item_text)
+                    price_text = UniversalParser._extract_financial_info_flexible(item_text, ['譲渡希望価格', '希望価格', '価格'])
                     
-                    for detail in detail_elements:
-                        heading = detail.find('p', class_='heading')
-                        if heading:
-                            heading_text = heading.get_text(strip=True)
-                            value_p = heading.find_next_sibling('p')
-                            if value_p:
-                                value_text = value_p.get_text(strip=True)
-                                
-                                if heading_text == '譲渡希望価格':
-                                    price_text = value_text
-                    
-                    # 地域情報を抽出
-                    info_element = item.find('div', class_='c-projects-feed__info')
-                    if info_element:
-                        info_text = info_element.get_text(strip=True)
-                        # "業種／地域"の形式から地域部分を抽出
-                        if '／' in info_text:
-                            location_text = info_text.split('／')[-1]
-                    
-                    # リンクを生成
                     link = f"https://masouken.com/list/{deal_id}"
                     
-                    # データ作成
                     deal_data = RawDealData(
                         site_name=site_config['name'],
                         deal_id=deal_id,
@@ -1194,27 +1417,25 @@ class UniversalParser:
                         revenue_text=revenue_text,
                         profit_text=profit_text,
                         price_text=price_text,
-                        features_text=""  # 詳細ページで取得
+                        features_text=""
                     )
                     
                     results.append(deal_data)
-                    logging.info(f"    -> Successfully extracted deal: {deal_id} - {title[:50]}")
                     
                 except Exception as e:
-                    logging.error(f"    -> Error parsing deal item: {e}")
+                    logging.error(f"Error parsing deal item: {e}")
                     continue
         
-        # フォールバック: テキストベース抽出
+        # フォールバック処理も改善
         if not results:
-            logging.info("    -> Trying text-based extraction as fallback")
-            results = UniversalParser._parse_masouken_text_fallback(site_config, html_content)
+            results = UniversalParser._parse_masouken_text_fallback_improved(site_config, html_content)
         
-        logging.info(f"    -> M&A総合研究所: Successfully extracted {len(results)} deals meeting criteria")
+        logging.info(f"M&A総合研究所: Successfully extracted {len(results)} deals")
         return results
-    
+
     @staticmethod
-    def _parse_masouken_text_fallback(site_config: Dict[str, Any], html_content: str) -> List[RawDealData]:
-        """M&A総合研究所のフォールバックテキスト抽出"""
+    def _parse_masouken_text_fallback_improved(site_config: Dict[str, Any], html_content: str) -> List[RawDealData]:
+        """M&A総合研究所のフォールバックテキスト抽出（改善版）"""
         results = []
         
         # BeautifulSoupでパース
@@ -1222,12 +1443,12 @@ class UniversalParser:
         
         # アプローチ1: 案件IDパターンでテキスト分割
         content_text = soup.get_text()
-        logging.info(f"    -> Total content length: {len(content_text)} characters")
+        logging.info(f"Total content length: {len(content_text)} characters")
         
         # 案件IDパターンを検索
         deal_id_pattern = r'案件ID[：:\s]*(\d+)'
         deal_matches = list(re.finditer(deal_id_pattern, content_text))
-        logging.info(f"    -> Found {len(deal_matches)} deal ID matches")
+        logging.info(f"Found {len(deal_matches)} deal ID matches")
         
         if deal_matches:
             for i, match in enumerate(deal_matches):
@@ -1242,18 +1463,18 @@ class UniversalParser:
                     else:
                         content = content_text[start_pos:start_pos + 2000]  # 最後の案件は2000文字まで
                     
-                    logging.info(f"    -> Processing deal ID: {deal_id}, content length: {len(content)}")
+                    logging.info(f"Processing deal ID: {deal_id}, content length: {len(content)}")
                     
                     # タイトル抽出の改善
-                    title = UniversalParser._extract_masouken_title(content, deal_id)
+                    title = UniversalParser._extract_masouken_title_flexible(content, deal_id)
                     
                     # 所在地抽出の改善
-                    location_text = UniversalParser._extract_masouken_location(content)
+                    location_text = UniversalParser._extract_location_flexible(content)
                     
                     # 財務情報抽出
-                    revenue_text = UniversalParser._extract_financial_info(content, '売上高')
-                    profit_text = UniversalParser._extract_financial_info(content, '営業利益')
-                    price_text = UniversalParser._extract_financial_info(content, '譲渡希望価格')
+                    revenue_text = UniversalParser._extract_financial_info_flexible(content, ['売上高', '売上'])
+                    profit_text = UniversalParser._extract_financial_info_flexible(content, ['営業利益', '利益'])
+                    price_text = UniversalParser._extract_financial_info_flexible(content, ['譲渡希望価格', '希望価格'])
                     
                     # 財務条件チェック
                     revenue_value = DataConverter.parse_financial_value(revenue_text)
@@ -1263,7 +1484,7 @@ class UniversalParser:
                     min_profit = CONFIG.get('scraping', {}).get('min_profit', 30000000)
                     
                     if revenue_value < min_revenue or profit_value < min_profit:
-                        logging.info(f"    -> Skipping deal {deal_id}: doesn't meet financial criteria")
+                        logging.info(f"Skipping deal {deal_id}: doesn't meet financial criteria")
                         continue
                     
                     # リンク生成
@@ -1280,27 +1501,71 @@ class UniversalParser:
                             revenue_text=revenue_text,
                             profit_text=profit_text,
                             price_text=price_text,
-                            features_text=""  # 詳細ページで取得
+                            features_text=""
                         )
                         results.append(deal_data)
-                        logging.info(f"    -> Successfully extracted deal: {deal_id} - {title[:50]}")
+                        logging.info(f"Successfully extracted deal: {deal_id} - {title[:50]}")
                     else:
-                        logging.debug(f"    -> Skipped incomplete deal: ID={deal_id}, Title={title[:30] if title else 'None'}")
+                        logging.debug(f"Skipped incomplete deal: ID={deal_id}, Title={title[:30] if title else 'None'}")
                         
                 except Exception as e:
-                    logging.error(f"    -> Error parsing deal {i + 1}: {e}")
+                    logging.error(f"Error parsing deal {i + 1}: {e}")
                     continue
         
         return results
-    
+
     @staticmethod
-    def _extract_masouken_title(content: str, deal_id: str) -> str:
-        """M&A総合研究所のタイトル抽出を改善"""
+    def _extract_financial_info_flexible(text: str, keywords: List[str]) -> str:
+        """より柔軟な財務情報抽出"""
+        for keyword in keywords:
+            patterns = [
+                rf'{keyword}[：:\s]*([^\n]+)',
+                rf'{keyword}\s*([^\n]+)',
+                rf'・{keyword}[：:\s]*([^\n]+)'
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, text)
+                if match:
+                    value = match.group(1).strip()
+                    # クリーンアップ
+                    value = re.sub(r'^[：:\s・]+', '', value)
+                    # 次の項目で切る
+                    for stop_word in ['営業利益', '譲渡希望価格', '所在地', '業界']:
+                        if stop_word in value and stop_word != keyword:
+                            value = value.split(stop_word)[0].strip()
+                            break
+                    if value and len(value) > 0:
+                        return value
+        return ""
+
+    @staticmethod
+    def _extract_location_flexible(text: str) -> str:
+        """より柔軟な所在地抽出"""
+        location_keywords = ['所在地', 'エリア', '地域', '所在']
+        
+        for keyword in location_keywords:
+            pattern = rf'{keyword}[：:\s]*([^\n：]+)'
+            match = re.search(pattern, text)
+            if match:
+                location = match.group(1).strip()
+                # 都道府県名が含まれているかチェック
+                prefectures = ['北海道', '青森', '岩手', '宮城', '秋田', '山形', '福島', '茨城', '栃木', '群馬', '埼玉', '千葉', '東京', '神奈川', '新潟', '富山', '石川', '福井', '山梨', '長野', '岐阜', '静岡', '愛知', '三重', '滋賀', '京都', '大阪', '兵庫', '奈良', '和歌山', '鳥取', '島根', '岡山', '広島', '山口', '徳島', '香川', '愛媛', '高知', '福岡', '佐賀', '長崎', '熊本', '大分', '宮崎', '鹿児島', '沖縄']
+                
+                for pref in prefectures:
+                    if pref in location:
+                        return location
+        
+        return ""
+
+    @staticmethod
+    def _extract_masouken_title_flexible(content: str, deal_id: str) -> str:
+        """M&A総合研究所のタイトル抽出を改善（柔軟版）"""
         
         # パターン1: 【】で囲まれたタイトルを抽出（より柔軟に）
         bracket_patterns = [
-            r'【([^】]{5,100})】',  # 基本パターン
-            r'案件ID[：:\s]*' + deal_id + r'[^\n]*\n[^\n]*【([^】]{5,100})】',  # 案件ID後の【】
+            r'【([^】]{5,100})】',
+            r'案件ID[：:\s]*' + deal_id + r'[^\n]*\n[^\n]*【([^】]{5,100})】',
         ]
         
         exclude_keywords = [
@@ -1342,128 +1607,50 @@ class UniversalParser:
         # フォールバック: 汎用的なタイトルを生成
         logging.warning(f"Could not extract proper title for deal {deal_id}, using fallback")
         return f"M&A案件_{deal_id}"
-    
-    @staticmethod
-    def _extract_masouken_location(content: str) -> str:
-        """M&A総合研究所の所在地抽出を改善"""
-        
-        # パターン1: 直接的な所在地表記（クリーニング強化）
-        direct_patterns = [
-            r'所在地[：:\s]*([^：:\n]{2,20})',
-            r'エリア[：:\s]*([^：:\n]{2,20})',
-            r'地域[：:\s]*([^：:\n]{2,20})',
-            r'・所在地[：:\s]*([^：:\n]{2,20})',
-            r'・エリア[：:\s]*([^：:\n]{2,20})'
-        ]
-        
-        for pattern in direct_patterns:
-            matches = re.findall(pattern, content)
-            for match in matches:
-                location_candidate = match.strip()
-                
-                # 不要なテキストを除去
-                location_candidate = re.sub(r'^[：:\s・◆■▼]+', '', location_candidate)
-                location_candidate = re.sub(r'[：:\s・◆■▼]+$', '', location_candidate)
-                
-                # 「選択してください」などの不要な文字列を除去
-                unwanted_phrases = [
-                    '選択してください', 'select', 'option', 'value',
-                    '案件ID', '売上', '利益', '価格', '事業', '会社', '株式'
-                ]
-                
-                # 不要フレーズが含まれている場合は除去を試行
-                for phrase in unwanted_phrases:
-                    if phrase in location_candidate:
-                        location_candidate = location_candidate.replace(phrase, '')
-                        location_candidate = re.sub(r'^[^\w]+', '', location_candidate)
-                        location_candidate = re.sub(r'[^\w]+$', '', location_candidate)
-                
-                # 長さチェック
-                if not (2 <= len(location_candidate) <= 15):
-                    continue
-                
-                # 有効な地域名かチェック
-                if UniversalParser._is_valid_location(location_candidate):
-                    logging.info(f"Found location (direct): {location_candidate}")
-                    return location_candidate
-        
-        # パターン2: 都道府県名の直接検索
-        prefecture_pattern = r'(北海道|青森県?|岩手県?|宮城県?|秋田県?|山形県?|福島県?|茨城県?|栃木県?|群馬県?|埼玉県?|千葉県?|東京都?|神奈川県?|新潟県?|富山県?|石川県?|福井県?|山梨県?|長野県?|岐阜県?|静岡県?|愛知県?|三重県?|滋賀県?|京都府?|大阪府?|兵庫県?|奈良県?|和歌山県?|鳥取県?|島根県?|岡山県?|広島県?|山口県?|徳島県?|香川県?|愛媛県?|高知県?|福岡県?|佐賀県?|長崎県?|熊本県?|大分県?|宮崎県?|鹿児島県?|沖縄県?)'
-        
-        prefecture_matches = re.findall(prefecture_pattern, content)
-        if prefecture_matches:
-            result = prefecture_matches[0]
-            logging.info(f"Found location (prefecture): {result}")
-            return result
-        
-        logging.info("No location found")
-        return ""
 
     @staticmethod
-    def _is_valid_location(location_text: str) -> bool:
-        """地域名として有効かどうかを判定するヘルパー関数"""
-        
-        # 都道府県名リスト
-        prefectures = [
-            '北海道', '青森', '岩手', '宮城', '秋田', '山形', '福島',
-            '茨城', '栃木', '群馬', '埼玉', '千葉', '東京', '神奈川',
-            '新潟', '富山', '石川', '福井', '山梨', '長野', '岐阜',
-            '静岡', '愛知', '三重', '滋賀', '京都', '大阪', '兵庫',
-            '奈良', '和歌山', '鳥取', '島根', '岡山', '広島', '山口',
-            '徳島', '香川', '愛媛', '高知', '福岡', '佐賀', '長崎',
-            '熊本', '大分', '宮崎', '鹿児島', '沖縄'
+    def _extract_dl_elements_flexible(item: Tag, data: Dict[str, str]) -> None:
+        """DL要素からの詳細情報抽出（柔軟版）"""
+        # より多くのdl構造を試行
+        dl_selectors = [
+            "dl.p-case__dl",
+            "dl[class*='case']",
+            "div dl",
+            "dl"
         ]
         
-        # 地方名リスト
-        regions = [
-            '北海道', '東北', '関東', '甲信越', '中部', '北陸',
-            '近畿', '関西', '中国', '四国', '九州', '沖縄',
-            '首都圏', '関東圏', '関西圏', '中京圏'
-        ]
+        dl_tags = []
+        for selector in dl_selectors:
+            dl_tags = item.select(selector)
+            if dl_tags:
+                break
         
-        # 海外地域
-        international = [
-            '海外', '国内', '全国', 'アジア', '東南アジア',
-            'タイ', 'シンガポール', 'ベトナム', 'マレーシア', '中国', '韓国'
-        ]
-        
-        # いずれかのリストに部分一致するかチェック
-        all_locations = prefectures + regions + international
-        
-        for valid_location in all_locations:
-            if valid_location in location_text:
-                return True
-        
-        # 「県」「府」「都」「道」が含まれていれば有効とみなす
-        if any(suffix in location_text for suffix in ['県', '府', '都', '道']):
-            return True
-        
-        return False
-
-    @staticmethod
-    def _extract_dl_elements(item: Tag, data: Dict[str, str]) -> None:
-        """DL要素からの詳細情報抽出"""
-        dl_tags = item.select("dl.p-case__dl")
         for dl in dl_tags:
-            dts = dl.find_all("dt")
-            dds = dl.find_all("dd")
-            for dt, dd in zip(dts, dds):
+            dt = dl.find("dt")
+            dd = dl.find("dd")
+            
+            if dt and dd:
                 jp_key = dt.get_text(strip=True)
                 en_key = Constants.JAPANESE_TO_ENGLISH_FIELDS.get(jp_key)
-                if en_key and en_key in [Constants.FIELD_REVENUE, Constants.FIELD_PROFIT, Constants.FIELD_LOCATION, Constants.FIELD_PRICE]:
+                
+                if en_key and en_key in [Constants.FIELD_REVENUE, Constants.FIELD_PROFIT, 
+                                        Constants.FIELD_LOCATION, Constants.FIELD_PRICE]:
                     data[f"{en_key}_text"] = dd.get_text(strip=True)
-    
+
     @staticmethod
-    def _extract_enhanced_features(item_element: Tag) -> str:
-        """M&Aロイヤル用の拡張特色抽出"""
+    def _extract_enhanced_features_flexible(item_element: Tag) -> str:
+        """M&Aロイヤル用の拡張特色抽出（柔軟版）"""
         try:
             all_text = item_element.get_text()
             
-            # 特徴セクションのパターン検索
+            # 特徴セクションのパターン検索（より多くのパターン）
             feature_patterns = [
                 r'【特徴・強み】(.+?)(?=【|■|◆|$)',
                 r'【特色】(.+?)(?=【|■|◆|$)',
                 r'【事業内容】(.+?)(?=【|■|◆|$)',
+                r'特徴・強み[：:\s]*(.+?)(?=【|■|◆|$)',
+                r'特色[：:\s]*(.+?)(?=【|■|◆|$)',
+                r'事業内容[：:\s]*(.+?)(?=【|■|◆|$)',
             ]
             
             for pattern in feature_patterns:
@@ -1476,6 +1663,8 @@ class UniversalParser:
                         (r'✓([^✓\n]+)', '✓'),
                         (r'・([^・\n]+)', '・'),
                         (r'◆([^◆\n]+)', '◆'),
+                        (r'○([^○\n]+)', '○'),
+                        (r'●([^●\n]+)', '●'),
                     ]
                     
                     for bullet_pattern, marker in bullet_patterns:
@@ -1498,35 +1687,8 @@ class UniversalParser:
             return "-"
             
         except Exception as e:
-            logging.error(f"    -> Error extracting enhanced features: {e}")
+            logging.error(f"Error extracting enhanced features: {e}")
             return "-"
-    
-    @staticmethod
-    def _extract_financial_info(content: str, field_pattern: str) -> str:
-        """財務情報抽出のヘルパー"""
-        patterns = [
-            rf'{field_pattern}[：:\s]*([^\n]+)',
-            rf'・{field_pattern}[：:\s]*([^\n]+)',
-            rf'{field_pattern}\s*([^\n]+)',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, content)
-            if match:
-                value = match.group(1).strip()
-                # 不要な文字列を除去
-                value = re.sub(r'^[：:\s]+', '', value)
-                value = re.sub(r'[・◆▼]+$', '', value)
-                # 次の項目名が含まれている場合はそこで切る
-                next_items = ['営業利益', '譲渡希望価格', '所在地', '業界', '案件ID']
-                for next_item in next_items:
-                    if next_item in value and next_item != field_pattern:
-                        value = value.split(next_item)[0].strip()
-                        break
-                if len(value) > 0 and value != field_pattern:
-                    return value
-        
-        return ""
 
 class GSheetConnector:
     """Google Sheets接続管理クラス"""
@@ -1656,6 +1818,43 @@ def fetch_html(url: str) -> Optional[str]:
         logging.error(f"Unexpected error fetching {url}: {e}")
         return None
 
+def diagnose_site_structure(site_config: Dict[str, Any], html_content: str) -> None:
+    """サイト構造の診断機能"""
+    soup = BeautifulSoup(html_content, 'lxml')
+    site_name = site_config['name']
+    
+    logging.info(f"🔍 Diagnosing {site_name} structure...")
+    
+    # HTMLの基本情報
+    logging.info(f"  HTML length: {len(html_content)} characters")
+    logging.info(f"  Title: {soup.title.string if soup.title else 'No title'}")
+    
+    # 設定されたセレクターの検証
+    if 'item_selector' in site_config:
+        items = soup.select(site_config['item_selector'])
+        logging.info(f"  Items found with '{site_config['item_selector']}': {len(items)}")
+        
+        if len(items) == 0:
+            # 代替セレクターを試行
+            alternative_selectors = [
+                'article', 'div[class*="item"]', 'li[class*="item"]',
+                'div[class*="case"]', 'div[class*="project"]', 
+                'tr', 'div[class*="deal"]'
+            ]
+            
+            for alt_selector in alternative_selectors:
+                alt_items = soup.select(alt_selector)
+                if len(alt_items) > 0:
+                    logging.warning(f"  🔄 Alternative selector '{alt_selector}' found {len(alt_items)} items")
+    
+    # エラーページの検出
+    error_indicators = ['404', 'error', 'not found', 'blocked', 'forbidden']
+    page_text = soup.get_text().lower()
+    
+    for indicator in error_indicators:
+        if indicator in page_text:
+            logging.warning(f"  ⚠️ Possible error page detected: '{indicator}' found in content")
+
 def format_deal_data(raw_deals: List[RawDealData], existing_ids: Set[str]) -> List[FormattedDealData]:
     """生データを整形済みデータに変換し、条件チェックを行う"""
     formatted_deals = []
@@ -1711,7 +1910,7 @@ def format_deal_data(raw_deals: List[RawDealData], existing_ids: Set[str]) -> Li
     return formatted_deals
 
 def scrape_site(site_config: Dict[str, Any]) -> List[RawDealData]:
-    """各サイトのスクレイピングを実行"""
+    """各サイトのスクレイピングを実行（診断機能付き）"""
     if not site_config.get('enabled', False):
         logging.info(f"Site {site_config['name']} is disabled. Skipping.")
         return []
@@ -1745,11 +1944,19 @@ def scrape_site(site_config: Dict[str, Any]) -> List[RawDealData]:
                 logging.error(f"  ❌ Failed to fetch page {page_num}")
                 continue
             
+            # 診断実行
+            diagnose_site_structure(site_config, html_content)
+            
             # 統一されたパーサーを使用
             deals = UniversalParser.parse_list_page(site_config, html_content)
-            
-            logging.info(f"  ✅ Found {len(deals)} deals on page {page_num}")
             all_deals.extend(deals)
+            
+            # 診断機能：1ページ目で案件が0件の場合は警告
+            if page_num == 1 and len(deals) == 0:
+                logging.critical(f"🚨 CRITICAL - {site_config['name']}の1ページ目から案件が1件も見つかりませんでした。")
+                logging.critical(f"   サイトのHTML構造が変更された可能性があります。")
+                logging.critical(f"   config.yamlのCSSセレクタを見直してください。")
+                logging.critical(f"   現在のitem_selector: {site_config.get('item_selector')}")
             
             time.sleep(2)
             
@@ -1774,29 +1981,36 @@ def scrape_strike_with_dynamic_loading(url: str) -> Optional[str]:
             # 52件の案件アイテムが読み込まれるまで待機（最大30秒）
             wait = WebDriverWait(driver, 30)
             
-            logging.info("  ⏳ Waiting for 52 deal items to load...")
+            logging.info("  ⏳ Waiting for deal items to load...")
             
-            # 案件アイテムが52件以上読み込まれるまで待機
+            # 案件アイテムが読み込まれるまで待機（より柔軟に）
             try:
-                wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, 'div.search-result__item')) >= 52)
-                logging.info("  ✅ 52+ deal items loaded successfully")
-            except TimeoutException:
-                # タイムアウトした場合でも、現在読み込まれている件数をチェック
-                current_items = driver.find_elements(By.CSS_SELECTOR, 'div.search-result__item')
-                logging.warning(f"  ⚠️ Timeout waiting for 52 items. Currently loaded: {len(current_items)} items")
+                # 複数のセレクターを試行
+                selectors_to_wait = [
+                    'div.search-result__item',
+                    'div[class*="search-result"]',
+                    'div[class*="item"]'
+                ]
                 
-                if len(current_items) < 20:  # 最低限の件数もない場合はエラー
-                    logging.error("  ❌ Too few items loaded, aborting")
-                    return None
-                else:
-                    logging.info(f"  ✅ Proceeding with {len(current_items)} loaded items")
+                items_found = False
+                for selector in selectors_to_wait:
+                    try:
+                        wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, selector)) >= 10)
+                        current_items = driver.find_elements(By.CSS_SELECTOR, selector)
+                        logging.info(f"  ✅ {len(current_items)} items loaded with selector: {selector}")
+                        items_found = True
+                        break
+                    except TimeoutException:
+                        continue
+                
+                if not items_found:
+                    logging.warning("  ⚠️ Timeout waiting for items with all selectors")
+                    
+            except TimeoutException:
+                logging.warning(f"  ⚠️ Timeout waiting for items")
             
             # 追加の待機（JavaScriptの完全な実行完了を確保）
             time.sleep(3)
-            
-            # 最終的な案件数を確認
-            final_items = driver.find_elements(By.CSS_SELECTOR, 'div.search-result__item')
-            logging.info(f"  📊 Final item count: {len(final_items)}")
             
             return driver.page_source
             
@@ -1809,7 +2023,6 @@ def enhance_deals_with_details(raw_deals: List[RawDealData], site_config: Dict[s
     """詳細ページから特色情報を取得して既存データを拡張（403対策強化版）"""
     
     # 一覧ページで十分な情報が取得できるサイトは詳細ページアクセスをスキップ
-    # M&Aロイヤルアドバイザリーを除外（特徴・強みは詳細ページにのみ存在）
     skip_detail_sites = ["M&Aキャピタルパートナーズ"]
     
     if site_config['name'] in skip_detail_sites:
@@ -1866,11 +2079,11 @@ def enhance_deals_with_details(raw_deals: List[RawDealData], site_config: Dict[s
                         
                         enhanced_deals.append(deal)
                     
-                    # 人間らしい待機時間（M&Aロイヤルアドバイザリーも慎重に）
+                    # 人間らしい待機時間
                     if site_config['name'] in ["ストライク", "M&Aロイヤルアドバイザリー"]:
-                        delay = anti_blocking.get_human_like_delay(4, 10)  # 4-10秒のランダム待機
+                        delay = anti_blocking.get_human_like_delay(4, 6)
                     else:
-                        delay = anti_blocking.get_human_like_delay(2, 5)   # 2-5秒のランダム待機
+                        delay = anti_blocking.get_human_like_delay(2, 4)
                     
                     logging.info(f"    -> Waiting {delay:.1f} seconds before next request...")
                     time.sleep(delay)
@@ -1887,29 +2100,20 @@ def enhance_deals_with_details(raw_deals: List[RawDealData], site_config: Dict[s
     logging.info(f"✅ Enhanced {len(enhanced_deals)} deals with detail information")
     return enhanced_deals
 
-
-def enhance_maroyal_deal_with_features(deal: RawDealData, scraper: 'DetailPageScraper', 
-    anti_blocking: 'AntiBlockingManager', referer_url: str) -> RawDealData:
+def enhance_maroyal_deal_with_features(deal: RawDealData, scraper: DetailPageScraper, 
+    anti_blocking: AntiBlockingManager, referer_url: str) -> RawDealData:
     """M&Aロイヤルアドバイザリーの案件に特徴・強み情報を追加"""
     try:
         logging.info(f"    🔍 Fetching features from M&Aロイヤルアドバイザリー detail page: {deal.link}")
         
-        # 詳細ページにアクセス
-        success = scraper.driver.get_with_retry(deal.link, referer=referer_url, max_retries=3)
-        if not success:
-            logging.warning(f"    ⚠️ Failed to load detail page for deal {deal.deal_id}")
-            return deal
+        # 詳細ページの特色を取得
+        features_text = scraper.fetch_features_with_blocking_protection(
+            deal.link, 
+            {},  # M&Aロイヤルは独自の抽出ロジックを使用
+            referer_url
+        )
         
-        # ページの読み込み完了を待つ
-        time.sleep(3)
-        
-        # HTMLを取得
-        soup = BeautifulSoup(scraper.driver.page_source, 'html.parser')
-        
-        # 特徴・強み情報を抽出
-        features_text = extract_maroyal_features(soup)
-        
-        if features_text:
+        if features_text and features_text != "-":
             deal.features_text = features_text
             logging.info(f"    ✅ Extracted features: {features_text[:100]}...")
         else:
@@ -1919,98 +2123,6 @@ def enhance_maroyal_deal_with_features(deal: RawDealData, scraper: 'DetailPageSc
         logging.error(f"    ❌ Error fetching features for deal {deal.deal_id}: {e}")
     
     return deal
-
-
-def extract_maroyal_features(soup: BeautifulSoup) -> str:
-    """M&Aロイヤルアドバイザリーのページから特徴・強み情報を抽出"""
-    try:
-        features_parts = []
-        
-        # パターン1: 「特徴・強み」の見出しを探す
-        feature_keywords = ['特徴・強み', '特徴', '強み', '事業概要', '事業内容']
-        
-        for keyword in feature_keywords:
-            # 見出しタグから特徴・強みを探す
-            headers = soup.find_all(['h2', 'h3', 'h4', 'h5', 'dt'], string=lambda x: x and keyword in x)
-            
-            for header in headers:
-                # 見出しの次の要素を取得
-                next_elements = []
-                current = header.find_next_sibling()
-                
-                while current and current.name not in ['h1', 'h2', 'h3', 'h4', 'h5']:
-                    if current.name in ['p', 'div', 'ul', 'li', 'dd']:
-                        text = current.get_text(strip=True)
-                        if text and len(text) > 10:  # 短すぎるテキストは除外
-                            next_elements.append(text)
-                    current = current.find_next_sibling()
-                
-                if next_elements:
-                    features_parts.extend(next_elements)
-                    break  # 最初に見つかった特徴・強みセクションを使用
-        
-        # パターン2: リスト形式の特徴を探す
-        if not features_parts:
-            # ・で始まる箇条書きを探す
-            bullet_points = []
-            for element in soup.find_all(['p', 'li', 'div']):
-                text = element.get_text(strip=True)
-                if text.startswith('・') or text.startswith('•'):
-                    bullet_points.append(text)
-            
-            if bullet_points:
-                features_parts = bullet_points
-        
-        # パターン3: テーブル形式から抽出
-        if not features_parts:
-            tables = soup.find_all('table')
-            for table in tables:
-                rows = table.find_all('tr')
-                for row in rows:
-                    cells = row.find_all(['td', 'th'])
-                    if len(cells) >= 2:
-                        header_text = cells[0].get_text(strip=True)
-                        if any(keyword in header_text for keyword in feature_keywords):
-                            content_text = cells[1].get_text(strip=True)
-                            if content_text and len(content_text) > 10:
-                                features_parts.append(content_text)
-        
-        # パターン4: div要素内のコンテンツを探す
-        if not features_parts:
-            # 特定のクラス名やID名を持つ要素を探す
-            content_areas = soup.find_all(['div', 'section'], class_=lambda x: x and any(
-                keyword in str(x).lower() for keyword in ['feature', 'strength', 'overview', 'content']
-            ))
-            
-            for area in content_areas:
-                text = area.get_text(strip=True)
-                if text and len(text) > 50:  # ある程度の長さのテキストのみ
-                    # 箇条書きに分割
-                    lines = [line.strip() for line in text.split('\n') if line.strip()]
-                    bullet_lines = [line for line in lines if line.startswith(('・', '•', '-'))]
-                    if bullet_lines:
-                        features_parts.extend(bullet_lines)
-                    elif lines:
-                        features_parts.extend(lines[:3])  # 最初の3行のみ
-        
-        # 結果をフォーマット
-        if features_parts:
-            # 重複を除去し、適切にフォーマット
-            unique_features = []
-            for feature in features_parts:
-                if feature not in unique_features and len(feature.strip()) > 5:
-                    unique_features.append(feature.strip())
-            
-            # 【特徴・強み】ヘッダーを追加
-            if unique_features:
-                formatted_features = "【特徴・強み】\n" + "\n".join(f"・ {feature}" if not feature.startswith(('・', '•')) else feature for feature in unique_features[:5])
-                return formatted_features
-        
-        return ""
-        
-    except Exception as e:
-        logging.error(f"Error extracting M&Aロイヤルアドバイザリー features: {e}")
-        return ""
 
 def enhance_strike_deal_with_details_protected(deal: RawDealData, scraper: DetailPageScraper, anti_blocking: AntiBlockingManager, referer_url: str) -> RawDealData:
     """ストライクの詳細ページから追加情報を取得（403対策強化版）"""
@@ -2062,17 +2174,17 @@ def enhance_strike_deal_with_details_protected(deal: RawDealData, scraper: Detai
         
         detail_soup = BeautifulSoup(html_content, 'lxml')
         
-        # タイトルの取得（複数のアプローチで完全対応）
+        # タイトルの取得
         title = extract_strike_title_enhanced(detail_soup, deal.deal_id)
         if title and title != f"ストライク案件_{deal.deal_id}":
             deal.title = title
         
-        # 所在地の取得（地方単位表記）
+        # 所在地の取得
         location = extract_strike_location_enhanced(detail_soup)
         if location:
             deal.location_text = location
         
-        # 特色の取得（事業概要 + 特徴・強み）
+        # 特色の取得
         features = scraper._fetch_strike_features_enhanced(detail_soup, deal.link)
         if features and features != "-":
             deal.features_text = features
@@ -2130,22 +2242,6 @@ def extract_strike_title_enhanced(detail_soup: BeautifulSoup, deal_id: str) -> s
                     logging.info(f"    -> Found title via header search: {header_text[:30]}...")
                     return header_text
     
-    # アプローチ3: テキスト全体から抽出
-    full_text = detail_soup.get_text()
-    
-    # 案件ID周辺のテキストを探す
-    if deal_id in full_text:
-        # 案件IDの前後100文字を取得
-        deal_id_pos = full_text.find(deal_id)
-        surrounding_text = full_text[max(0, deal_id_pos-100):deal_id_pos+200]
-        
-        # 【】で囲まれたタイトルを探す
-        bracket_matches = re.findall(r'【([^】]{5,80})】', surrounding_text)
-        for match in bracket_matches:
-            if deal_id not in match and len(match) > 5:
-                logging.info(f"    -> Found title via bracket search: {match[:30]}...")
-                return f"【{match}】"
-    
     # フォールバック: デフォルトタイトル
     logging.warning(f"    -> Could not extract title for {deal_id}, using default")
     return f"ストライク案件_{deal_id}"
@@ -2190,29 +2286,16 @@ def extract_strike_location_enhanced(detail_soup: BeautifulSoup) -> str:
                 logging.info(f"    -> Found location via full text search: {valid_location}")
                 return valid_location
     
-    # アプローチ3: dtタグから所在地を探す
-    dt_elements = detail_soup.find_all('dt')
-    for dt in dt_elements:
-        dt_text = dt.get_text(strip=True)
-        if '所在地' in dt_text:
-            dd = dt.find_next_sibling('dd')
-            if dd:
-                dd_text = dd.get_text(strip=True)
-                for valid_location in valid_locations:
-                    if valid_location in dd_text:
-                        logging.info(f"    -> Found location via dt/dd: {valid_location}")
-                        return valid_location
-    
     logging.warning("    -> Could not extract location")
     return ""
 
 def main():
-    """メイン実行関数（403対策強化版）"""
+    """メイン実行関数（診断機能付き）"""
     try:
         load_config()
         setup_logging(CONFIG)
         
-        logging.info("🚀 Starting M&A deal scraping process with anti-blocking measures")
+        logging.info("🚀 Starting M&A deal scraping with diagnostics and anti-blocking measures")
         logging.info(f"📊 Target criteria: Revenue ≥ {CONFIG.get('scraping', {}).get('min_revenue', 300000000):,} yen, Profit ≥ {CONFIG.get('scraping', {}).get('min_profit', 30000000):,} yen")
         
         sheet_connector = GSheetConnector(CONFIG)
@@ -2224,14 +2307,18 @@ def main():
         logging.info(f"📋 Found {len(existing_ids)} existing deals in spreadsheet")
         
         all_new_deals = []
-        enabled_sites = [site for site in CONFIG['sites'] if site.get('enabled', False)]
+        target_sites = ["M&A総合研究所", "M&Aキャピタルパートナーズ", "M&Aロイヤルアドバイザリー", "ストライク"]
+        enabled_sites = [site for site in CONFIG['sites'] 
+                        if site.get('enabled', False) and site['name'] in target_sites]
         
         for site_config in enabled_sites:
             try:
+                logging.info(f"🔍 Processing {site_config['name']}")
+                
                 raw_deals = scrape_site(site_config)
                 
                 if not raw_deals:
-                    logging.info(f"  No deals found from {site_config['name']}")
+                    logging.warning(f"⚠️ {site_config['name']}: No deals extracted")
                     continue
                 
                 enhanced_deals = enhance_deals_with_details(raw_deals, site_config)
@@ -2248,9 +2335,9 @@ def main():
             sheet_connector.write_deals(all_new_deals)
             logging.info(f"🎉 Successfully added {len(all_new_deals)} new deals to spreadsheet")
         else:
-            logging.info("📝 No new deals to add")
+            logging.warning("📝 No new deals found across all sites")
         
-        logging.info("✨ Scraping process completed successfully with anti-blocking measures")
+        logging.info("✨ Scraping process completed successfully with diagnostics and anti-blocking measures")
         
     except Exception as e:
         logging.critical(f"💥 Critical error in main process: {e}")

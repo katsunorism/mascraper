@@ -88,27 +88,19 @@ sites:
     enabled: true
     url: "https://ma-la.co.jp/case/"
     max_pages: 3
-    pagination: 
+    pagination:
       type: "path"
-      path: "page/{page_num}/"
-    conditions: 
-      min_revenue: 300000000    # 3億円以上
-      min_profit: 30000000      # 3千万円以上
-    parser_function: "parse_maroyal"
-    item_selector: 'li.p-case__unit'
+      path: "/page/{page_num}/"
+    item_selector: 'li.p-case__unit'  # これは正しい
     data_selectors:
-      案件ID: 'p.p-case__no span:nth-of-type(2)'
-      タイトル: 'h2.p-case__ttl'
-      リンク: 'a'
-    # 詳細ページ設定を追加
+      案件ID: 'p.p-case__no span:last-child'  # 修正：案件番号のみ抽出
+      タイトル: 'h2.p-case__ttl'  # 正しい
+      リンク: '.p-case__more a'  # 修正：詳細ページへのリンク
     detail_page_selectors:
       features:
-        start_keywords: ["特徴・強み", "特徴", "強み", "事業概要", "事業内容"]
-        end_keywords: ["希望金額", "所在地", "従業員数", "概要"]
-        target_tags: ["p", "ul", "li", "div", "dd", "td"]
-        list_indicators: ["・", "•", "-"]
-        min_text_length: 10
-        max_features: 5
+        start_keywords: ['【特徴・強み】', '特徴・強み', '事業内容']
+        end_tag: 'h2'
+        target_tags: ['p', 'div', 'ul', 'li']
 
   # ストライク
   - name: "ストライク"
