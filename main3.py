@@ -733,7 +733,7 @@ class NihonMACenterParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_nihon_ma_{timestamp}.html"
+            debug_file = f"debug/debug_nihon_ma_{timestamp}.html"
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
@@ -1013,7 +1013,7 @@ class IntegroupParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_integroup_{timestamp}.html"
+            debug_file = f"debug/debug_integroup_{timestamp}.html"
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
@@ -1313,7 +1313,7 @@ class NewoldCapitalParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_newold_{timestamp}.html"
+            debug_file = f"debug/debug_newold_{timestamp}.html"
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
@@ -1517,7 +1517,7 @@ class OnDeckParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_ondeck_{timestamp}.html"
+            debug_file = f"debug/debug_ondeck_{timestamp}.html"
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
@@ -1800,7 +1800,7 @@ class DetailPageScraper:
                 if CONFIG.get('debug', {}).get('save_html_files', False):
                     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                     deal_id = detail_url.split('no=')[-1] if 'no=' in detail_url else 'unknown'
-                    debug_file = f"debug_nihon_ma_detail_{deal_id}_{timestamp}.html"
+                    debug_file = f"debug/debug_nihon_ma_detail_{deal_id}_{timestamp}.html"
                     with open(debug_file, 'w', encoding='utf-8') as f:
                         f.write(response.text)
                     logging.info(f"Debug: Detail HTML saved to {debug_file}")
@@ -1843,7 +1843,7 @@ class DetailPageScraper:
                 if CONFIG.get('debug', {}).get('save_html_files', False):
                     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                     deal_id = detail_url.split('/')[-1].replace('.html', '') if '.html' in detail_url else 'unknown'
-                    debug_file = f"debug_integroup_detail_{deal_id}_{timestamp}.html"
+                    debug_file = f"debug/debug_integroup_detail_{deal_id}_{timestamp}.html"
                     with open(debug_file, 'w', encoding='utf-8') as f:
                         f.write(response.text)
                     logging.info(f"Debug: Detail HTML saved to {debug_file}")
@@ -1887,7 +1887,7 @@ class DetailPageScraper:
                 if CONFIG.get('debug', {}).get('save_html_files', False):
                     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                     deal_id = detail_url.split('/')[-2] if detail_url.endswith('/') else detail_url.split('/')[-1]
-                    debug_file = f"debug_newold_detail_{deal_id}_{timestamp}.html"
+                    debug_file = f"debug/debug_newold_detail_{deal_id}_{timestamp}.html"
                     with open(debug_file, 'w', encoding='utf-8') as f:
                         f.write(response.text)
                     logging.info(f"Debug: Detail HTML saved to {debug_file}")
@@ -1936,7 +1936,7 @@ class DetailPageScraper:
                 if CONFIG.get('debug', {}).get('save_html_files', False):
                     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                     deal_id = detail_url.split('/')[-1] if detail_url.split('/')[-1] else detail_url.split('/')[-2]
-                    debug_file = f"debug_ondeck_detail_{deal_id}_{timestamp}.html"
+                    debug_file = f"debug/debug_ondeck_detail_{deal_id}_{timestamp}.html"
                     with open(debug_file, 'w', encoding='utf-8') as f:
                         # デバッグファイル保存時も正しくデコードされたHTMLを使用
                         f.write(str(detail_soup))
@@ -3154,7 +3154,7 @@ def scrape_ondeck() -> List[RawDealData]:
                         # デバッグ用: 詳細ページHTMLファイル保存
                         if CONFIG.get('debug', {}).get('save_html_files', False):
                             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-                            debug_file = f"debug_ondeck_detail_{deal.deal_id}_{timestamp}.html"
+                            debug_file = f"debug/debug_ondeck_detail_{deal.deal_id}_{timestamp}.html"
                             with open(debug_file, 'w', encoding='utf-8') as f:
                                 f.write(detail_html)
                             logging.info(f"Debug: Detail HTML saved to {debug_file}")

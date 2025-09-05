@@ -283,9 +283,12 @@ class DetailPageScraper:
         """特色テキストの整形処理"""
         text_with_header_breaks = re.sub(r'(?<!^)(【[^【】]+】)', r'\n\1', raw_text_block)
         
-        inline_markers_pattern = r'(?<!^)([・○◆✓●◉▼■])'
-        if re.search(inline_markers_pattern, text_with_header_breaks):
-            text_with_all_breaks = re.sub(inline_markers_pattern, r'\n\1', text_with_header_breaks)
+        # 行頭のマーカーのみを対象とし、文中の「・」は分割しない
+        line_start_marker_pattern = r'(?<!^)(?<=。\s*)([・○◆✓●◉▼■])|(?<!^)(?<=、\s*)([・○◆✓●◉▼■])|(?<!^)(?<=\n\s*)([・○◆✓●◉▼■])'
+        
+        # より慎重な分割：文の終わりや明確な区切りの後のマーカーのみ分割
+        if re.search(line_start_marker_pattern, text_with_header_breaks):
+            text_with_all_breaks = re.sub(line_start_marker_pattern, r'\n\1\2\3', text_with_header_breaks)
             lines = text_with_all_breaks.splitlines()
         else:
             lines = text_with_header_breaks.splitlines()
@@ -294,8 +297,8 @@ class DetailPageScraper:
         for line in lines:
             stripped_line = line.strip()
             if stripped_line:
-                # 【修正箇所】マーカーの後の不要なスペースを削除
-                cleaned_line = re.sub(r'^([・○◆✓●◉▼■　☆★※▲▽])[\s　]+', r'\1', stripped_line)
+                # マーカー後の不要なスペースを削除
+                cleaned_line = re.sub(r'^([・○◆✓●◉▼■　☆★※▲▽])[\s　\t]+', r'\1', stripped_line)
                 final_lines.append(cleaned_line)
         
         return "\n".join(final_lines)
@@ -378,7 +381,7 @@ class DetailPageScraper:
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             deal_id = detail_url.split('code=')[-1] if 'code=' in detail_url else 'unknown'
-            debug_file = f"debug_strike_detail_{deal_id}_{timestamp}.html"
+            debug_file = os.path.join("debug", f"debug_strike_detail_{deal_id}_{timestamp}.html")
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(str(detail_soup))
             logging.info(f"Debug: Strike detail HTML saved to {debug_file}")
@@ -515,38 +518,72 @@ class DetailPageScraper:
             if not line:
                 continue
             
-            # マーカーがある場合の処理
-            if any(marker in line for marker in ['■', '●', '◆', '・', '○', '▼', '◎']):
-                # マーカーで分割
-                marker_pattern = r'([■●◆・○▼◎])'
-                parts = re.split(marker_pattern, line)
-                
-                current_item = ""
-                for i, part in enumerate(parts):
-                    if part in ['■', '●', '◆', '・', '○', '▼', '◎']:
-                        if current_item.strip():
-                            lines.append(current_item.strip())
-                        current_item = part
-                    else:
-                        current_item += part
-                
-                if current_item.strip():
-                    lines.append(current_item.strip())
+            # 行頭のマーカーがある場合の処理
+            line_start_markers = ['■', '●', '◆', '○', '▼', '◎']  # ←ここに「■」を追加
+            has_line_start_marker = any(line.startswith(marker) for marker in line_start_markers)
+            
+            if has_line_start_marker:
+                # 行頭にマーカーがある場合はそのまま追加（マーカー後の空白は削除）
+                cleaned_line = re.sub(r'^([■●◆○▼◎])[\s　\t]+', r'\1', line)  # ←ここにも「■」を追加
+                lines.append(cleaned_line)
             else:
-                # マーカーがない場合はそのまま追加
-                lines.append(line)
+                # 行頭にマーカーがない場合は、文中の「・」では分割しない
+                # ただし、明らかに箇条書きと思われる場合（「・」の後に大文字や改行がある場合）のみ分割
+                bullet_pattern = r'([・])(?=\s*[A-Z一-龯])'  # 「・」の後に文字が続く場合のみ
+                
+                # 文中の「・」（例：「企画・開発」）は分割しない
+                # 箇条書きの「・」（例：「・関西地方を中心に」）のみ分割
+                if '・' in line:
+                    # 「・」が行頭にある、または「・」の前後に十分な文脈がある場合のみ分割
+                    parts = re.split(r'(?<=。)\s*・|(?<=、)\s*・|^\s*・', line)
+                    
+                    if len(parts) > 1:
+                        # 分割された場合
+                        for i, part in enumerate(parts):
+                            part = part.strip()
+                            if part:
+                                if i == 0 and not part.startswith('・'):
+                                    lines.append(part)
+                                else:
+                                    if not part.startswith('・'):
+                                        part = f'・{part}'
+                                    # マーカー後の空白を削除
+                                    cleaned_part = re.sub(r'^([・])[\s　\t]+', r'\1', part)
+                                    lines.append(cleaned_part)
+                    else:
+                        # 分割されなかった場合（文中の「・」）はそのまま追加
+                        lines.append(line)
+                else:
+                    # 「・」がない場合は「■」での分割処理を追加
+                    if '■' in line and not line.startswith('■'):
+                        # 「■」で分割（文末の「。」の後の「■」のみ）
+                        parts = re.split(r'(?<=。)\s*■', line)
+                        
+                        if len(parts) > 1:
+                            # 最初の部分をそのまま追加
+                            if parts[0].strip():
+                                lines.append(parts[0].strip())
+                            
+                            # 残りの部分に「■」を付けて追加
+                            for part in parts[1:]:
+                                part = part.strip()
+                                if part:
+                                    cleaned_part = re.sub(r'^[\s　\t]+', '', part)
+                                    lines.append(f'■{cleaned_part}')
+                        else:
+                            lines.append(line)
+                    else:
+                        # 「■」がない場合、または行頭が「■」の場合はそのまま追加
+                        lines.append(line)
         
         # 重複除去と最終クリーンアップ
         final_lines = []
         seen = set()
         
         for line in lines:
-            # マーカー後の不要なスペースを削除
-            cleaned_line = re.sub(r'([■●◆・○▼◎])[\s　\t]+', r'\1', line)
-            
-            if cleaned_line and len(cleaned_line) > 2 and cleaned_line not in seen:
-                final_lines.append(cleaned_line)
-                seen.add(cleaned_line)
+            if line and len(line) > 2 and line not in seen:
+                final_lines.append(line)
+                seen.add(line)
         
         return '\n'.join(final_lines)
 
@@ -884,7 +921,7 @@ class UniversalParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_strike_{timestamp}.html"
+            debug_file = os.path.join("debug", f"debug_strike_{timestamp}.html")
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
@@ -1034,7 +1071,7 @@ class UniversalParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_ma_capital_{timestamp}.html"
+            debug_file = os.path.join("debug", f"debug_ma_capital_{timestamp}.html")
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
@@ -1355,9 +1392,16 @@ class UniversalParser:
             if label_text and filtered_lines:
                 final_lines = [f"【{label_text}】"] + filtered_lines
         
-        # 5. 最終的な整形
-        if final_lines:
-            result = '\n'.join(final_lines)
+        # 5. マーカー後の空白を完全削除
+        cleaned_final_lines = []
+        for line in final_lines:
+            # マーカー後の全ての空白文字（スペース、タブ、全角スペース）を削除
+            cleaned_line = re.sub(r'([◎○◆✓●◉▼■・▲▽☆★※])\s+', r'\1', line)
+            cleaned_final_lines.append(cleaned_line)
+        
+        # 6. 最終的な整形
+        if cleaned_final_lines:
+            result = '\n'.join(cleaned_final_lines)
             
             # 連続する改行を単一化（3つ以上の改行を2つに）
             result = re.sub(r'\n{3,}', '\n\n', result)
@@ -1457,7 +1501,7 @@ class UniversalParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_masouken_{timestamp}.html"
+            debug_file = os.path.join("debug", f"debug_masouken_{timestamp}.html")
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
