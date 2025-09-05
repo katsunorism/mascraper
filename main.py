@@ -427,28 +427,35 @@ class DetailPageScraper:
                 # 方法1: find_next_siblingでspanタグを直接探す
                 value_span = label_span.find_next_sibling('span')
                 if value_span:
-                    for br in value_span.find_all('br'):
+                    # 【修正】brタグを改行に変換してからテキスト抽出
+                    value_span_copy = value_span.__copy__() if hasattr(value_span, '__copy__') else value_span
+                    for br in value_span_copy.find_all('br'):
                         br.replace_with('\n')
-                    value_text = value_span.get_text(strip=True)
+                    value_text = value_span_copy.get_text(strip=True)
                     if value_text and len(value_text) > 2:
-                        # 【修正箇所】マーカー後の不要なスペースを削除
-                        cleaned_value = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', value_text)
-                        logging.info(f"    -> Found via next_sibling span: {cleaned_value[:30]}...")
-                        return cleaned_value
+                        # 【修正】改行を保持しながらマーカー処理
+                        formatted_value = self._format_strike_text_with_linebreaks(value_text)
+                        logging.info(f"    -> Found via next_sibling span: {formatted_value[:30]}...")
+                        return formatted_value
                 
                 # 方法2: li要素内の全テキストから抽出
-                li_text = li.get_text(separator=' ', strip=True)
+                # 【修正】brタグを改行に変換
+                li_copy = li.__copy__() if hasattr(li, '__copy__') else li
+                for br in li_copy.find_all('br'):
+                    br.replace_with('\n')
+                li_text = li_copy.get_text(separator='\n', strip=True)
                 label_full_text = label_span.get_text(strip=True)
                 if label_full_text in li_text:
                     remaining_text = li_text.replace(label_full_text, '', 1).strip()
                     if remaining_text and len(remaining_text) > 2:
-                        # 【修正箇所】マーカー後の不要なスペースを削除
-                        cleaned_remaining = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', remaining_text)
-                        logging.info(f"    -> Found via text extraction: {cleaned_remaining[:30]}...")
-                        return cleaned_remaining
+                        # 【修正】改行を保持しながらマーカー処理
+                        formatted_remaining = self._format_strike_text_with_linebreaks(remaining_text)
+                        logging.info(f"    -> Found via text extraction: {formatted_remaining[:30]}...")
+                        return formatted_remaining
                 
                 # 方法3: 複数の兄弟要素を順次チェック
                 current_sibling = label_span.next_sibling
+                collected_text = []
                 for attempt in range(5):
                     if current_sibling is None:
                         break
@@ -456,37 +463,92 @@ class DetailPageScraper:
                     if isinstance(current_sibling, str):
                         text_content = current_sibling.strip()
                         if text_content and len(text_content) > 2:
-                            # 【修正箇所】マーカー後の不要なスペースを削除
-                            cleaned_content = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', text_content)
-                            logging.info(f"    -> Found via sibling text: {cleaned_content[:30]}...")
-                            return cleaned_content
+                            collected_text.append(text_content)
                     elif hasattr(current_sibling, 'get_text'):
-                        tag_content = current_sibling.get_text(strip=True)
+                        # 【修正】brタグを改行に変換
+                        sibling_copy = current_sibling.__copy__() if hasattr(current_sibling, '__copy__') else current_sibling
+                        for br in sibling_copy.find_all('br'):
+                            br.replace_with('\n')
+                        tag_content = sibling_copy.get_text(strip=True)
                         if tag_content and len(tag_content) > 2:
-                            # 【修正箇所】マーカー後の不要なスペースを削除
-                            cleaned_tag_content = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', tag_content)
-                            logging.info(f"    -> Found via sibling tag: {cleaned_tag_content[:30]}...")
-                            return cleaned_tag_content
+                            collected_text.append(tag_content)
                     
                     current_sibling = current_sibling.next_sibling
+                
+                if collected_text:
+                    combined_text = '\n'.join(collected_text)
+                    formatted_combined = self._format_strike_text_with_linebreaks(combined_text)
+                    logging.info(f"    -> Found via sibling collection: {formatted_combined[:30]}...")
+                    return formatted_combined
             
             # アプローチ2: ラベルが直接テキストに含まれている場合
-            li_text = li.get_text(strip=True)
+            # 【修正】brタグを改行に変換
+            li_copy = li.__copy__() if hasattr(li, '__copy__') else li
+            for br in li_copy.find_all('br'):
+                br.replace_with('\n')
+            li_text = li_copy.get_text(strip=True)
             if label_text in li_text:
-                # ラベルテキストの後の部分を抽出
                 parts = li_text.split(label_text, 1)
                 if len(parts) == 2:
                     remaining = parts[1].strip()
-                    # 先頭の区切り文字を除去
                     remaining = re.sub(r'^[：:\s　]+', '', remaining)
                     if remaining and len(remaining) > 2:
-                        # 【修正箇所】マーカー後の不要なスペースを削除
-                        cleaned_remaining = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', remaining)
-                        logging.info(f"    -> Found via text split: {cleaned_remaining[:30]}...")
-                        return cleaned_remaining
+                        formatted_remaining = self._format_strike_text_with_linebreaks(remaining)
+                        logging.info(f"    -> Found via text split: {formatted_remaining[:30]}...")
+                        return formatted_remaining
         
         logging.warning(f"    -> No content found for label: {label_text}")
         return ""
+
+    def _format_strike_text_with_linebreaks(self, text: str) -> str:
+        """ストライクのテキストを改行を保持しながら整形"""
+        if not text:
+            return ""
+        
+        lines = []
+        
+        # 既存の改行で分割
+        raw_lines = text.split('\n')
+        
+        for line in raw_lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # マーカーがある場合の処理
+            if any(marker in line for marker in ['■', '●', '◆', '・', '○', '▼', '◎']):
+                # マーカーで分割
+                marker_pattern = r'([■●◆・○▼◎])'
+                parts = re.split(marker_pattern, line)
+                
+                current_item = ""
+                for i, part in enumerate(parts):
+                    if part in ['■', '●', '◆', '・', '○', '▼', '◎']:
+                        if current_item.strip():
+                            lines.append(current_item.strip())
+                        current_item = part
+                    else:
+                        current_item += part
+                
+                if current_item.strip():
+                    lines.append(current_item.strip())
+            else:
+                # マーカーがない場合はそのまま追加
+                lines.append(line)
+        
+        # 重複除去と最終クリーンアップ
+        final_lines = []
+        seen = set()
+        
+        for line in lines:
+            # マーカー後の不要なスペースを削除
+            cleaned_line = re.sub(r'([■●◆・○▼◎])[\s　\t]+', r'\1', line)
+            
+            if cleaned_line and len(cleaned_line) > 2 and cleaned_line not in seen:
+                final_lines.append(cleaned_line)
+                seen.add(cleaned_line)
+        
+        return '\n'.join(final_lines)
 
     def _extract_strike_features_from_text(self, detail_soup: BeautifulSoup) -> List[str]:
         """ストライクの特色をテキスト全体から抽出（フォールバック）"""
@@ -677,7 +739,7 @@ class DetailPageScraper:
                 for li in li_items:
                     item_text = li.get_text(strip=True)
                     if len(item_text) > 10:
-                        # 【修正箇所】マーカー後の不要なスペースを削除してから追加
+                        # 【修正】マーカー後の不要なスペースを削除してから追加
                         cleaned_item = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', item_text)
                         formatted_items.append(f"・{cleaned_item}")
             elif any(marker in text for marker in ['・', '◆', '▼', '○', '●']):
@@ -687,22 +749,43 @@ class DetailPageScraper:
                         for part in parts[1:]:
                             part = part.strip()
                             if len(part) > 10:
-                                # 【修正箇所】マーカー後の不要なスペースを削除
+                                # 【修正】マーカー後の不要なスペースを削除し、改行で分割
                                 cleaned_part = re.sub(r'^[\s　]+', '', part)
-                                formatted_items.append(f"・{cleaned_part}")
+                                # 文の区切りで改行を追加
+                                sentences = re.split(r'(?<=[。．])\s*(?=[・○◆✓●◉▼■◎])|(?<=[。．])\s*(?=\S)', cleaned_part)
+                                for sentence in sentences:
+                                    sentence = sentence.strip()
+                                    if len(sentence) > 10:
+                                        formatted_items.append(f"・{sentence}")
                         break
             elif len(text) > 15:
-                sentences = re.split(r'[。．]', text)
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if len(sentence) > 15:
-                        if not sentence.endswith('。'):
-                            sentence += '。'
-                        # 【修正箇所】文頭の不要なスペースを削除
-                        cleaned_sentence = re.sub(r'^[\s　]+', '', sentence)
-                        formatted_items.append(f"・{cleaned_sentence}")
+                # 【修正】文章を自然な区切りで分割
+                # まず、マーカーがある場合はそれで分割
+                if any(marker in text for marker in ['・', '○', '◆', '✓', '●', '◉', '▼', '■', '◎']):
+                    marker_pattern = r'([・○◆✓●◉▼■◎])'
+                    parts = re.split(marker_pattern, text)
+                    current_item = ""
+                    for i, part in enumerate(parts):
+                        if part in ['・', '○', '◆', '✓', '●', '◉', '▼', '■', '◎']:
+                            if current_item.strip() and len(current_item.strip()) > 10:
+                                formatted_items.append(f"・{current_item.strip()}")
+                            current_item = ""
+                        else:
+                            current_item += part
+                    if current_item.strip() and len(current_item.strip()) > 10:
+                        formatted_items.append(f"・{current_item.strip()}")
+                else:
+                    # マーカーがない場合は句点で分割
+                    sentences = re.split(r'[。．]', text)
+                    for sentence in sentences:
+                        sentence = sentence.strip()
+                        if len(sentence) > 15:
+                            if not sentence.endswith('。'):
+                                sentence += '。'
+                            cleaned_sentence = re.sub(r'^[\s　]+', '', sentence)
+                            formatted_items.append(f"・{cleaned_sentence}")
         
-        return "\n".join(formatted_items[:5])
+        return "\n".join(formatted_items[:8])  # 最大8項目に増加
 
     def _format_masouken_text(self, text: str) -> str:
         """M&A総合研究所のテキストを整形"""
@@ -711,6 +794,38 @@ class DetailPageScraper:
         
         cleaned_text = text.strip()
         
+        # 【修正】マーカーがある場合は改行を保持
+        if any(marker in cleaned_text for marker in ['・', '◆', '▼', '○', '●']):
+            lines = []
+            # まず改行で分割
+            text_lines = cleaned_text.split('\n')
+            
+            for line in text_lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # マーカーで分割しつつ改行も考慮
+                found_marker = False
+                for marker in ['・', '◆', '▼', '○', '●']:
+                    if marker in line:
+                        found_marker = True
+                        # マーカーで分割
+                        parts = line.split(marker)
+                        for part in parts[1:]:  # 最初の空の部分をスキップ
+                            part = part.strip()
+                            if len(part) > 10:
+                                cleaned_part = re.sub(r'^[\s　]+', '', part)
+                                lines.append(f"・{cleaned_part}")
+                        break
+                
+                if not found_marker and len(line) > 10:
+                    lines.append(f"・{line}")
+            
+            if lines:
+                return '\n'.join(lines[:5])  # 最大5項目
+        
+        # 長すぎる場合は切り詰め
         if len(cleaned_text) > 500:
             sentences = re.split(r'[。．]', cleaned_text)
             truncated_sentences = []
@@ -726,17 +841,15 @@ class DetailPageScraper:
             if cleaned_text and not cleaned_text.endswith('。'):
                 cleaned_text += '。'
         
-        if '・' in cleaned_text or '◆' in cleaned_text:
-            return cleaned_text
-        else:
-            sentences = re.split(r'[。．]', cleaned_text)
-            bullet_points = []
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if len(sentence) > 10:
-                    bullet_points.append(f"・{sentence}。")
-            
-            return "\n".join(bullet_points[:3])
+        # マーカーがない場合は文で分割
+        sentences = re.split(r'[。．]', cleaned_text)
+        bullet_points = []
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if len(sentence) > 10:
+                bullet_points.append(f"・{sentence}。")
+        
+        return "\n".join(bullet_points[:3])
 
 class UniversalParser:
     """統一されたパーサークラス"""
