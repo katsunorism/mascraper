@@ -294,6 +294,7 @@ class DetailPageScraper:
         for line in lines:
             stripped_line = line.strip()
             if stripped_line:
+                # 【修正箇所】マーカーの後の不要なスペースを削除
                 cleaned_line = re.sub(r'^([・○◆✓●◉▼■　☆★※▲▽])[\s　]+', r'\1', stripped_line)
                 final_lines.append(cleaned_line)
         
@@ -430,8 +431,10 @@ class DetailPageScraper:
                         br.replace_with('\n')
                     value_text = value_span.get_text(strip=True)
                     if value_text and len(value_text) > 2:
-                        logging.info(f"    -> Found via next_sibling span: {value_text[:30]}...")
-                        return value_text
+                        # 【修正箇所】マーカー後の不要なスペースを削除
+                        cleaned_value = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', value_text)
+                        logging.info(f"    -> Found via next_sibling span: {cleaned_value[:30]}...")
+                        return cleaned_value
                 
                 # 方法2: li要素内の全テキストから抽出
                 li_text = li.get_text(separator=' ', strip=True)
@@ -439,8 +442,10 @@ class DetailPageScraper:
                 if label_full_text in li_text:
                     remaining_text = li_text.replace(label_full_text, '', 1).strip()
                     if remaining_text and len(remaining_text) > 2:
-                        logging.info(f"    -> Found via text extraction: {remaining_text[:30]}...")
-                        return remaining_text
+                        # 【修正箇所】マーカー後の不要なスペースを削除
+                        cleaned_remaining = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', remaining_text)
+                        logging.info(f"    -> Found via text extraction: {cleaned_remaining[:30]}...")
+                        return cleaned_remaining
                 
                 # 方法3: 複数の兄弟要素を順次チェック
                 current_sibling = label_span.next_sibling
@@ -451,13 +456,17 @@ class DetailPageScraper:
                     if isinstance(current_sibling, str):
                         text_content = current_sibling.strip()
                         if text_content and len(text_content) > 2:
-                            logging.info(f"    -> Found via sibling text: {text_content[:30]}...")
-                            return text_content
+                            # 【修正箇所】マーカー後の不要なスペースを削除
+                            cleaned_content = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', text_content)
+                            logging.info(f"    -> Found via sibling text: {cleaned_content[:30]}...")
+                            return cleaned_content
                     elif hasattr(current_sibling, 'get_text'):
                         tag_content = current_sibling.get_text(strip=True)
                         if tag_content and len(tag_content) > 2:
-                            logging.info(f"    -> Found via sibling tag: {tag_content[:30]}...")
-                            return tag_content
+                            # 【修正箇所】マーカー後の不要なスペースを削除
+                            cleaned_tag_content = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', tag_content)
+                            logging.info(f"    -> Found via sibling tag: {cleaned_tag_content[:30]}...")
+                            return cleaned_tag_content
                     
                     current_sibling = current_sibling.next_sibling
             
@@ -471,8 +480,10 @@ class DetailPageScraper:
                     # 先頭の区切り文字を除去
                     remaining = re.sub(r'^[：:\s　]+', '', remaining)
                     if remaining and len(remaining) > 2:
-                        logging.info(f"    -> Found via text split: {remaining[:30]}...")
-                        return remaining
+                        # 【修正箇所】マーカー後の不要なスペースを削除
+                        cleaned_remaining = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', remaining)
+                        logging.info(f"    -> Found via text split: {cleaned_remaining[:30]}...")
+                        return cleaned_remaining
         
         logging.warning(f"    -> No content found for label: {label_text}")
         return ""
@@ -666,7 +677,9 @@ class DetailPageScraper:
                 for li in li_items:
                     item_text = li.get_text(strip=True)
                     if len(item_text) > 10:
-                        formatted_items.append(f"・{item_text}")
+                        # 【修正箇所】マーカー後の不要なスペースを削除してから追加
+                        cleaned_item = re.sub(r'([・○◆✓●◉▼■◎])[\s　\t]+', r'\1', item_text)
+                        formatted_items.append(f"・{cleaned_item}")
             elif any(marker in text for marker in ['・', '◆', '▼', '○', '●']):
                 for marker in ['・', '◆', '▼', '○', '●']:
                     if marker in text:
@@ -674,7 +687,9 @@ class DetailPageScraper:
                         for part in parts[1:]:
                             part = part.strip()
                             if len(part) > 10:
-                                formatted_items.append(f"・{part}")
+                                # 【修正箇所】マーカー後の不要なスペースを削除
+                                cleaned_part = re.sub(r'^[\s　]+', '', part)
+                                formatted_items.append(f"・{cleaned_part}")
                         break
             elif len(text) > 15:
                 sentences = re.split(r'[。．]', text)
@@ -683,7 +698,9 @@ class DetailPageScraper:
                     if len(sentence) > 15:
                         if not sentence.endswith('。'):
                             sentence += '。'
-                        formatted_items.append(f"・{sentence}")
+                        # 【修正箇所】文頭の不要なスペースを削除
+                        cleaned_sentence = re.sub(r'^[\s　]+', '', sentence)
+                        formatted_items.append(f"・{cleaned_sentence}")
         
         return "\n".join(formatted_items[:5])
 
@@ -1675,9 +1692,11 @@ class UniversalParser:
                             
                             for match in matches:
                                 cleaned_item = match.strip()
+                                # 【修正箇所】マーカー後の不要なスペースを削除
+                                cleaned_item = re.sub(r'^[\s　]+', '', cleaned_item)
                                 if (len(cleaned_item) > 10 and 
                                     any(keyword in cleaned_item for keyword in business_keywords)):
-                                    extracted_items.append(f"{marker}{cleaned_item.strip()}")
+                                    extracted_items.append(f"{marker}{cleaned_item}")
                                     if len(extracted_items) >= 5:
                                         break
                             
@@ -2023,7 +2042,7 @@ def enhance_deals_with_details(raw_deals: List[RawDealData], site_config: Dict[s
     """詳細ページから特色情報を取得して既存データを拡張（403対策強化版）"""
     
     # 一覧ページで十分な情報が取得できるサイトは詳細ページアクセスをスキップ
-    skip_detail_sites = ["M&Aキャピタルパートナーズ"]
+    skip_detail_sites = ["M&Aキャピタルパートナーズ", "M&Aロイヤルアドバイザリー"]
     
     if site_config['name'] in skip_detail_sites:
         logging.info(f"  Skipping detail page scraping for {site_config['name']} (using list page features)")
@@ -2055,10 +2074,6 @@ def enhance_deals_with_details(raw_deals: List[RawDealData], site_config: Dict[s
                         enhanced_deals.extend(raw_deals[i-1:])
                         break
                     
-                    # M&Aロイヤルアドバイザリーの詳細ページで特徴・強み情報を取得
-                    if site_config['name'] == "M&Aロイヤルアドバイザリー":
-                        enhanced_deal = enhance_maroyal_deal_with_features(deal, scraper, anti_blocking, referer_url)
-                        enhanced_deals.append(enhanced_deal)
                     # ストライクの詳細ページで追加情報を取得
                     elif site_config['name'] == "ストライク":
                         enhanced_deal = enhance_strike_deal_with_details_protected(deal, scraper, anti_blocking, referer_url)
