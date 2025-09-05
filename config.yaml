@@ -199,6 +199,51 @@ sites:
     profit_filter:
       min_amount: 30   # 30百万円以上
 
+  # スピードM&A
+  - name: "スピードM&A"
+    enabled: true
+    url: "https://speed-ma.com/projects"
+    max_pages: 2
+    pagination:
+      type: "query_param"
+      param: "p"
+    item_selector: "a.pcard__box"
+    data_selectors:
+      案件ID: "id"  # id属性から取得
+      リンク: "href"  # href属性から取得
+    detail_page_selectors:
+      title:
+        selector: "li.single_project_overviewList__item"
+        title_text: "事業概要"
+        content_selector: "div.single_project_overviewList__item-text"
+      location:
+        selector: "li.single_project_overviewList__item"
+        title_text: "地域"
+        content_selector: "div.single_project_overviewList__item-text"
+      revenue:
+        selector: "li.single_project_overviewList__item"
+        title_text: "売上高"
+        content_selector: "div.single_project_overviewList__item-text"
+      profit:
+        selector: "li.single_project_financialList__item"
+        title_text: "営業利益"
+        content_selector: "div.single_project_financialList__item-text"
+      price:
+        selector: "li.single_project_overviewList__item"
+        title_text: "希望譲渡価格"
+        content_selector: "div.single_project_overviewList__item-text"
+    filtering:
+      min_revenue: 300000000  # 3億円
+      min_profit: 30000000    # 3,000万円
+
+    # スピードM&A専用設定
+    speed_ma:
+      base_url: "https://speed-ma.com"
+      projects_url: "https://speed-ma.com/projects"
+      max_pages: 2
+      revenue_threshold: 300000000  # 3億円（円単位）
+      profit_threshold: 30000000   # 3,000万円（円単位）
+
   # 既存の設定は保持し、以下を追加
     filtering_criteria:
       日本M&Aセンター:

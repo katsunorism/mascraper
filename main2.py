@@ -1,4 +1,4 @@
-# main2.py - 日本M&Aセンター＆インテグループ＆NEWOLD CAPITAL専用スクレイピング（httpx版）
+# main2.py - 日本M&Aセンター＆インテグループ＆NEWOLD CAPITAL＆オンデック専用スクレイピング
 import httpx
 from bs4 import BeautifulSoup, Tag
 import gspread
@@ -543,6 +543,179 @@ class DataConverter:
         return result
     
     @staticmethod
+    def parse_ondeck_revenue(revenue_text: str) -> bool:
+        """オンデックの売上高が300百万円以上かチェック（強化版）"""
+        if not revenue_text:
+            return False
+        
+        # 「応相談」などの非数値テキストは除外
+        if any(keyword in revenue_text for keyword in ['応相談', '非開示', '未開示', '-']):
+            return False
+        
+        try:
+            # 「約」や括弧書きなどを除去
+            cleaned_text = re.sub(r'約|[（(][^）)]*[）)]', '', revenue_text)
+            
+            # レンジ表記の場合は下限値で判定
+            range_pattern = r'([\d,]+)～([\d,]+)'
+            range_match = re.search(range_pattern, cleaned_text)
+            
+            if range_match:
+                lower_value_str = range_match.group(1).replace(',', '')
+                lower_value = int(lower_value_str)
+                return lower_value >= 300  # 300百万円以上
+            
+            # 単一値の場合
+            single_pattern = r'([\d,]+)'
+            single_match = re.search(single_pattern, cleaned_text)
+            
+            if single_match:
+                value_str = single_match.group(1).replace(',', '')
+                value = int(value_str)
+                return value >= 300
+        
+        except (ValueError, AttributeError) as e:
+            logging.warning(f"Revenue parsing error for '{revenue_text}': {e}")
+            return False
+        
+        return False
+    
+    @staticmethod
+    def parse_ondeck_profit(profit_text: str) -> bool:
+        """オンデックの営業利益が30百万円以上かチェック（修正版）"""
+        if not profit_text:
+            return False
+        
+        # マイナス値（▲や-が含まれる）は除外
+        if '▲' in profit_text or '－' in profit_text or profit_text.strip().startswith('-'):
+            logging.info(f"    -> Excluding negative profit: {profit_text}")
+            return False
+        
+        # 「約」や括弧書きなどを無視して数字部分のみを抽出
+        # レンジ表記の場合は下限値で判定
+        range_pattern = r'([\d,]+)～([\d,]+)'
+        range_match = re.search(range_pattern, profit_text)
+        
+        if range_match:
+            lower_value_str = range_match.group(1).replace(',', '')
+            try:
+                lower_value = int(lower_value_str)
+                return lower_value >= 30  # 30百万円以上
+            except ValueError:
+                pass
+        
+        # 単一値の場合の処理
+        single_pattern = r'([\d,]+)'
+        single_match = re.search(single_pattern, profit_text)
+        
+        if single_match:
+            value_str = single_match.group(1).replace(',', '')
+            try:
+                value = int(value_str)
+                return value >= 30
+            except ValueError:
+                pass
+        
+        return False
+    
+    @staticmethod
+    def clean_ondeck_revenue(revenue_text: str) -> str:
+        """オンデックの売上高テキストをクリーニング"""
+        if not revenue_text:
+            return revenue_text
+        
+        # 「約」を除去
+        cleaned_text = re.sub(r'^約\s*', '', revenue_text)
+        
+        # 括弧内のテキストを除去（直近期実績など）
+        cleaned_text = re.sub(r'[（(][^）)]*[）)]', '', cleaned_text)
+        
+        # 余分な空白を除去
+        cleaned_text = cleaned_text.strip()
+        
+        # 桁区切りカンマを追加
+        if '～' in cleaned_text:
+            # レンジ表記の場合
+            parts = cleaned_text.split('～')
+            if len(parts) == 2:
+                try:
+                    lower = int(parts[0].replace('百万円', '').replace(',', ''))
+                    upper = int(parts[1].replace('百万円', '').replace(',', ''))
+                    return f"{lower:,}～{upper:,}百万円"
+                except ValueError:
+                    pass
+        else:
+            # 単一値の場合
+            try:
+                value = int(cleaned_text.replace('百万円', '').replace(',', ''))
+                return f"{value:,}百万円"
+            except ValueError:
+                pass
+        
+        return cleaned_text
+    
+    @staticmethod
+    def clean_ondeck_profit(profit_text: str) -> str:
+        """オンデックの営業利益テキストをクリーニング"""
+        if not profit_text:
+            return profit_text
+        
+        # 「約」を除去
+        cleaned_text = re.sub(r'^約\s*', '', profit_text)
+        
+        # 括弧内のテキストを除去（直近期実績修正後など）
+        cleaned_text = re.sub(r'[（(][^）)]*[）)]', '', cleaned_text)
+        
+        # 余分な空白を除去
+        cleaned_text = cleaned_text.strip()
+        
+        # 桁区切りカンマを追加
+        if '～' in cleaned_text:
+            # レンジ表記の場合
+            parts = cleaned_text.split('～')
+            if len(parts) == 2:
+                try:
+                    lower = int(parts[0].replace('百万円', '').replace(',', ''))
+                    upper = int(parts[1].replace('百万円', '').replace(',', ''))
+                    return f"{lower:,}～{upper:,}百万円"
+                except ValueError:
+                    pass
+        else:
+            # 単一値の場合
+            try:
+                value = int(cleaned_text.replace('百万円', '').replace(',', ''))
+                return f"{value:,}百万円"
+            except ValueError:
+                pass
+        
+        return cleaned_text
+    
+    @staticmethod
+    def clean_ondeck_price(price_text: str) -> str:
+        """オンデックの譲渡希望額テキストをクリーニング"""
+        if not price_text:
+            return price_text
+        
+        # 「応相談」のみの場合はそのまま返す
+        if price_text.strip() == "応相談":
+            return price_text
+        
+        # 括弧内の「応相談」を除去
+        cleaned_text = re.sub(r'[（(]応相談[）)]', '', price_text)
+        
+        # 余分な空白を除去
+        cleaned_text = cleaned_text.strip()
+        
+        # 桁区切りカンマを追加
+        try:
+            value = int(cleaned_text.replace('百万円', '').replace(',', ''))
+            return f"{value:,}百万円"
+        except ValueError:
+            pass
+        
+        return cleaned_text
+    
+    @staticmethod
     def format_financial_text(text: str) -> str:
         """財務テキストの整形"""
         return text.strip() if text else "-"
@@ -560,7 +733,7 @@ class NihonMACenterParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_nihon_ma_{timestamp}.html"
+            debug_file = f"debug/debug_nihon_ma_{timestamp}.html"
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
@@ -840,7 +1013,7 @@ class IntegroupParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_integroup_{timestamp}.html"
+            debug_file = f"debug/debug_integroup_{timestamp}.html"
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
@@ -1140,7 +1313,7 @@ class NewoldCapitalParser:
         # デバッグ用: HTMLファイル保存
         if CONFIG.get('debug', {}).get('save_html_files', False):
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            debug_file = f"debug_newold_{timestamp}.html"
+            debug_file = f"debug/debug_newold_{timestamp}.html"
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             logging.info(f"Debug: HTML saved to {debug_file}")
@@ -1216,9 +1389,13 @@ class NewoldCapitalParser:
             
             deal_id = deal_id_match.group(1)
             
-            # タイトルの抽出
+            # タイトルの抽出（修正箇所）
             title_element = item.select_one('h3.p-projects-list__item__title')
-            title = title_element.get_text(strip=True) if title_element else "案件詳細"
+            if title_element:
+                title = title_element.get_text(strip=True)
+            else:
+                # フォールバック: リンク先のページタイトルやテキストから抽出を試行
+                title = "案件詳細"
             
             # データリストから売上高とエリアを抽出
             revenue_text = ""
@@ -1328,6 +1505,270 @@ class NewoldCapitalParser:
             logging.error(f"    -> Error extracting from element: {e}")
             return None
 
+class OnDeckParser:
+    """オンデック専用パーサー（修正版）"""
+    
+    @staticmethod
+    def parse_list_page(html_content: str) -> List[RawDealData]:
+        """一覧ページのパース（一次フィルタリング込み）"""
+        soup = BeautifulSoup(html_content, 'lxml')
+        results = []
+        
+        # デバッグ用: HTMLファイル保存
+        if CONFIG.get('debug', {}).get('save_html_files', False):
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            debug_file = f"debug/debug_ondeck_{timestamp}.html"
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            logging.info(f"Debug: HTML saved to {debug_file}")
+        
+        # 一覧ページから案件情報を抽出
+        items = OnDeckParser._extract_items_from_list_page(soup)
+        
+        for i, item_data in enumerate(items):
+            try:
+                # 売上高による一次フィルタリング
+                if item_data.get('revenue_text') and DataConverter.parse_ondeck_revenue(item_data['revenue_text']):
+                    
+                    raw_deal = RawDealData(
+                        site_name="オンデック",
+                        deal_id=item_data.get('deal_id', ''),
+                        title=item_data.get('title', '案件詳細'),
+                        link=item_data.get('link', ''),
+                        revenue_text=item_data.get('revenue_text', ''),
+                        profit_text="",  # 詳細ページで取得
+                        location_text="",  # 詳細ページで取得
+                        price_text="",  # 詳細ページで取得
+                        features_text=""  # 詳細ページで取得
+                    )
+                    
+                    results.append(raw_deal)
+                    logging.info(f"    -> Deal {item_data.get('deal_id')} meets revenue criteria: {item_data.get('revenue_text')}")
+                else:
+                    logging.info(f"    -> Skipping deal {item_data.get('deal_id')}: Revenue doesn't meet criteria")
+                
+            except Exception as e:
+                logging.error(f"    -> Error parsing item {i+1}: {e}")
+                continue
+        
+        return results
+    
+    @staticmethod
+    def _extract_items_from_list_page(soup: BeautifulSoup) -> List[Dict[str, str]]:
+        """一覧ページから案件の基本情報を抽出"""
+        items = []
+        
+        # オンデックの一覧ページ構造に基づいて案件を抽出
+        # テーブル行形式の案件リストを想定
+        possible_selectors = [
+            'a.table_display__row',
+            'tr.table_display__row',
+            'div.table_display__row', 
+            'a[href*="/sell/"]',
+            'tr[data-href*="/sell/"]'
+        ]
+        
+        found_items = []
+        for selector in possible_selectors:
+            found_items = soup.select(selector)
+            if found_items:
+                logging.info(f"    -> Found {len(found_items)} items using selector: {selector}")
+                break
+        
+        if not found_items:
+            # フォールバック: 詳細ページリンクから逆算
+            links = soup.find_all('a', href=re.compile(r'/sell/[a-zA-Z]{2}\d+'))
+            logging.info(f"    -> Fallback: Found {len(links)} detail links")
+            
+            for link in links:
+                try:
+                    href = link.get('href', '')
+                    parent_element = link.parent
+                    
+                    # 親要素を遡って案件情報を含む要素を探す
+                    for _ in range(5):
+                        if parent_element and parent_element.name != 'body':
+                            parent_element = parent_element.parent
+                        else:
+                            break
+                    
+                    if parent_element:
+                        item_data = OnDeckParser._extract_item_data_from_element(parent_element, href)
+                        if item_data:
+                            items.append(item_data)
+                
+                except Exception as e:
+                    logging.error(f"    -> Error parsing fallback item: {e}")
+                    continue
+        else:
+            # 通常のパース処理
+            for item_element in found_items:
+                try:
+                    link = item_element.get('href', '') if item_element.name == 'a' else OnDeckParser._extract_link_from_element(item_element)
+                    if link:
+                        item_data = OnDeckParser._extract_item_data_from_element(item_element, link)
+                        if item_data:
+                            items.append(item_data)
+                
+                except Exception as e:
+                    logging.error(f"    -> Error parsing item: {e}")
+                    continue
+        
+        return items
+    
+    @staticmethod
+    def _extract_item_data_from_element(element: Tag, link: str) -> Optional[Dict[str, str]]:
+        """要素から案件の基本データを抽出"""
+        try:
+            # 案件IDをリンクから抽出
+            deal_id_match = re.search(r'/sell/([a-zA-Z]{2}\d+)', link)
+            if not deal_id_match:
+                return None
+            
+            deal_id = deal_id_match.group(1).upper()
+            
+            # 完全なURLに変換
+            if link.startswith('/'):
+                link = f"https://www.ondeck.jp{link}"
+            elif not link.startswith('http'):
+                link = f"https://www.ondeck.jp/{link}"
+            
+            # 業種（タイトル）を抽出
+            title = OnDeckParser._extract_title_from_element(element, deal_id)
+            
+            # 年商を抽出
+            revenue_text = OnDeckParser._extract_revenue_from_element(element)
+            
+            return {
+                'deal_id': deal_id,
+                'title': title,
+                'link': link,
+                'revenue_text': revenue_text
+            }
+        
+        except Exception as e:
+            logging.error(f"    -> Error extracting item data: {e}")
+            return None
+    
+    @staticmethod
+    def _extract_link_from_element(element: Tag) -> str:
+        """要素から詳細ページリンクを抽出"""
+        link_element = element.find('a', href=re.compile(r'/sell/[a-zA-Z]{2}\d+'))
+        if link_element:
+            return link_element.get('href', '')
+        return ""
+    
+    @staticmethod
+    def _extract_title_from_element(element: Tag, deal_id: str) -> str:
+        """要素からタイトル（業種）を抽出（修正版）"""
+        
+        # 方法1: ページタイトルからの抽出（最も確実）
+        # ページタイトルは通常 "業種名 | Ｍ＆Ａ支援のオンデック" の形式
+        page_title = element.find('title')
+        if page_title:
+            title_text = page_title.get_text(strip=True)
+            # " | Ｍ＆Ａ支援のオンデック" の部分を除去
+            if ' | ' in title_text:
+                business_type = title_text.split(' | ')[0].strip()
+                if business_type and len(business_type) <= 20:
+                    logging.info(f"    -> Found title from page title: {business_type}")
+                    return business_type
+        
+        # 方法2: h1またはh2タグの最初の文字列（業種名）を取得
+        for heading_tag in ['h1', 'h2']:
+            heading = element.find(heading_tag)
+            if heading:
+                heading_text = heading.get_text(strip=True)
+                # 改行や余分な情報を除去して最初の行のみ取得
+                first_line = heading_text.split('\n')[0].strip()
+                # 案件番号を除去
+                cleaned_title = re.sub(r'\（案件No\.\s*[A-Z]{2}\d+\）', '', first_line).strip()
+                if cleaned_title and len(cleaned_title) <= 20 and '案件' not in cleaned_title:
+                    logging.info(f"    -> Found title from {heading_tag}: {cleaned_title}")
+                    return cleaned_title
+        
+        # 方法3: メタデータからの抽出
+        # data-business-type や data-industry などの属性があれば取得
+        business_type_element = element.find('[data-business-type]')
+        if business_type_element:
+            business_type = business_type_element.get('data-business-type', '').strip()
+            if business_type:
+                logging.info(f"    -> Found title from data attribute: {business_type}")
+                return business_type
+        
+        # 方法4: 業種を含む専用要素の検索
+        industry_elements = element.select('span.industry, .business-type, .sector')
+        for industry_element in industry_elements:
+            title = industry_element.get_text(strip=True)
+            if title and len(title) <= 20:
+                logging.info(f"    -> Found title from industry element: {title}")
+                return title
+        
+        # 方法5: オンデック専用のdt/dd構造での業種検索
+        data_list = element.select_one('dl.p-sell-single__data__list')
+        if data_list:
+            dt_elements = data_list.find_all('dt')
+            dd_elements = data_list.find_all('dd')
+            
+            # dt要素とdd要素をペアで処理
+            for dt, dd in zip(dt_elements, dd_elements):
+                dt_text = dt.get_text(strip=True)
+                dd_text = dd.get_text(strip=True)
+                
+                # dtに何らかの業種情報、ddにラベルという逆パターンの場合
+                if ('業' in dd_text or 'サービス' in dd_text or '事業' in dd_text) and len(dt_text) <= 20:
+                    # dtが業種名の場合
+                    if dt_text and dt_text not in ['業種', '事業内容', '業務内容']:
+                        logging.info(f"    -> Found title from dt/dd structure: {dt_text}")
+                        return dt_text
+        
+        # 方法6: 正規表現パターンマッチング
+        element_text = element.get_text()
+        
+        # 業種名パターンの検索
+        industry_patterns = [
+            r'(建設業|運送業|製造業|IT業|サービス業|小売業|卸売業|不動産業|金融業|保険業|医療業|介護事業|教育事業|飲食業|美容業|清掃業|警備業|人材派遣業|コンサルティング業)',
+            r'([^\s]{2,10}業)(?:\s|$|（)',  # 「○○業」パターン
+            r'([^\s]{2,15}サービス)(?:\s|$|（)',  # 「○○サービス」パターン
+        ]
+        
+        for pattern in industry_patterns:
+            matches = re.findall(pattern, element_text)
+            if matches:
+                # 最も短い（具体的な）マッチを選択
+                best_match = min(matches, key=len) if isinstance(matches[0], str) else matches[0]
+                if best_match and len(best_match) <= 20:
+                    logging.info(f"    -> Found title from pattern matching: {best_match}")
+                    return best_match
+        
+        # 最終フォールバック
+        logging.warning(f"    -> Could not determine title for deal {deal_id}, using default")
+        return "案件詳細"
+    
+    @staticmethod
+    def _extract_revenue_from_element(element: Tag) -> str:
+        """要素から年商を抽出"""
+        # data-label="年商" の要素を探す
+        revenue_cell = element.select_one('div[data-label="年商"]')
+        if revenue_cell:
+            revenue_text = revenue_cell.get_text(strip=True)
+            # <br>タグによる改行を処理
+            revenue_text = re.sub(r'\s+', ' ', revenue_text)
+            return revenue_text
+        
+        # フォールバック: テキストから年商パターンを検索
+        element_text = element.get_text()
+        revenue_patterns = [
+            r'約?([\d,]+(?:～[\d,]+)?)百万円[（(][^）)]*[）)]?'
+        ]
+        
+        for pattern in revenue_patterns:
+            match = re.search(pattern, element_text)
+            if match:
+                return f"約{match.group(1)}百万円"
+        
+        return ""
+
 # --- 詳細ページスクレイパー ---
 class DetailPageScraper:
     """詳細ページのスクレイピング"""
@@ -1359,7 +1800,7 @@ class DetailPageScraper:
                 if CONFIG.get('debug', {}).get('save_html_files', False):
                     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                     deal_id = detail_url.split('no=')[-1] if 'no=' in detail_url else 'unknown'
-                    debug_file = f"debug_nihon_ma_detail_{deal_id}_{timestamp}.html"
+                    debug_file = f"debug/debug_nihon_ma_detail_{deal_id}_{timestamp}.html"
                     with open(debug_file, 'w', encoding='utf-8') as f:
                         f.write(response.text)
                     logging.info(f"Debug: Detail HTML saved to {debug_file}")
@@ -1402,7 +1843,7 @@ class DetailPageScraper:
                 if CONFIG.get('debug', {}).get('save_html_files', False):
                     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                     deal_id = detail_url.split('/')[-1].replace('.html', '') if '.html' in detail_url else 'unknown'
-                    debug_file = f"debug_integroup_detail_{deal_id}_{timestamp}.html"
+                    debug_file = f"debug/debug_integroup_detail_{deal_id}_{timestamp}.html"
                     with open(debug_file, 'w', encoding='utf-8') as f:
                         f.write(response.text)
                     logging.info(f"Debug: Detail HTML saved to {debug_file}")
@@ -1421,7 +1862,7 @@ class DetailPageScraper:
     
     @staticmethod
     def fetch_newold_details(detail_url: str) -> Dict[str, str]:
-        """NEWOLD CAPITALの詳細ページから情報を取得"""
+        """NEWOLD CAPITALの詳細ページから情報を取得（タイトル抽出追加版）"""
         if not detail_url:
             return {}
         
@@ -1446,15 +1887,66 @@ class DetailPageScraper:
                 if CONFIG.get('debug', {}).get('save_html_files', False):
                     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                     deal_id = detail_url.split('/')[-2] if detail_url.endswith('/') else detail_url.split('/')[-1]
-                    debug_file = f"debug_newold_detail_{deal_id}_{timestamp}.html"
+                    debug_file = f"debug/debug_newold_detail_{deal_id}_{timestamp}.html"
                     with open(debug_file, 'w', encoding='utf-8') as f:
                         f.write(response.text)
                     logging.info(f"Debug: Detail HTML saved to {debug_file}")
                 
+                # タイトル抽出を追加
+                title = DetailPageScraper._extract_newold_title_from_detail_page(detail_soup)
+                
                 return {
+                    'title': title,  # 新規追加
                     'profit': DetailPageScraper._extract_newold_profit(detail_soup),
                     'features': DetailPageScraper._extract_newold_features(detail_soup),
                     'price': DetailPageScraper._extract_newold_price(detail_soup)
+                }
+        
+        except Exception as e:
+            logging.error(f"    -> Error fetching detail page: {e}")
+            return {}
+    
+    @staticmethod
+    def fetch_ondeck_details(detail_url: str) -> Dict[str, str]:
+        """オンデックの詳細ページから情報を取得（修正版）"""
+        if not detail_url:
+            return {}
+        
+        try:
+            logging.info(f"    -> Fetching detail page: {detail_url}")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive'
+            }
+            
+            with httpx.Client(timeout=15, follow_redirects=True) as client:
+                response = client.get(detail_url, headers=headers)
+                response.raise_for_status()
+                
+                # 修正: response.textではなくresponse.contentを使用
+                # BeautifulSoupが自動的に文字エンコーディングを判定し、
+                # 圧縮されたデータも正しく解凍してくれる
+                detail_soup = BeautifulSoup(response.content, 'lxml')
+                
+                # デバッグ用: 詳細ページHTMLファイル保存
+                if CONFIG.get('debug', {}).get('save_html_files', False):
+                    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                    deal_id = detail_url.split('/')[-1] if detail_url.split('/')[-1] else detail_url.split('/')[-2]
+                    debug_file = f"debug/debug_ondeck_detail_{deal_id}_{timestamp}.html"
+                    with open(debug_file, 'w', encoding='utf-8') as f:
+                        # デバッグファイル保存時も正しくデコードされたHTMLを使用
+                        f.write(str(detail_soup))
+                    logging.info(f"Debug: Detail HTML saved to {debug_file}")
+                
+                return {
+                    'profit': DetailPageScraper._extract_ondeck_profit(detail_soup),
+                    'features': DetailPageScraper._extract_ondeck_features(detail_soup),
+                    'location': DetailPageScraper._extract_ondeck_location(detail_soup),
+                    'price': DetailPageScraper._extract_ondeck_price(detail_soup)
                 }
         
         except Exception as e:
@@ -1699,7 +2191,60 @@ class DetailPageScraper:
         
         logging.warning("    -> No features found with any method")
         return ""
-    
+
+    @staticmethod
+    def _extract_newold_title_from_detail_page(detail_soup: BeautifulSoup) -> str:
+        """NEWOLD CAPITALの詳細ページからタイトルを抽出"""
+        
+        # 方法1: ページタイトルから抽出（最も確実）
+        page_title = detail_soup.find('title')
+        if page_title:
+            title_text = page_title.get_text(strip=True)
+            # 「| NEWOLD CAPITAL」などのサイト名を除去
+            if ' | ' in title_text:
+                business_title = title_text.split(' | ')[0].strip()
+                if business_title and len(business_title) > 5:
+                    logging.info(f"    -> Found title from page title: {business_title}")
+                    return business_title
+            # サイト名がない場合はそのまま使用
+            elif title_text and len(title_text) > 5 and 'NEWOLD' not in title_text:
+                logging.info(f"    -> Found title from page title (no separator): {title_text}")
+                return title_text
+        
+        # 方法2: h1タグから抽出
+        h1_element = detail_soup.find('h1')
+        if h1_element:
+            h1_text = h1_element.get_text(strip=True)
+            if h1_text and len(h1_text) > 5 and '案件' not in h1_text:
+                logging.info(f"    -> Found title from h1: {h1_text}")
+                return h1_text
+        
+        # 方法3: 事業の内容セクションから抽出
+        business_content_heading = detail_soup.find('h3', string=re.compile(r'事業の内容'))
+        if business_content_heading:
+            next_element = business_content_heading.find_next_sibling(['p', 'div'])
+            if next_element:
+                content_text = next_element.get_text(strip=True)
+                # 最初の行または短い説明文を取得
+                first_sentence = content_text.split('。')[0].strip()
+                if first_sentence and 10 < len(first_sentence) < 100:
+                    logging.info(f"    -> Found title from business content: {first_sentence}")
+                    return first_sentence
+        
+        # 方法4: メタタグのdescriptionから抽出
+        meta_description = detail_soup.find('meta', attrs={'name': 'description'})
+        if meta_description:
+            description = meta_description.get('content', '').strip()
+            if description:
+                # 最初の文を取得
+                first_sentence = description.split('。')[0].strip()
+                if first_sentence and 10 < len(first_sentence) < 100:
+                    logging.info(f"    -> Found title from meta description: {first_sentence}")
+                    return first_sentence
+        
+        logging.warning("    -> Could not extract title from detail page")
+        return "案件詳細"
+
     @staticmethod
     def _extract_newold_profit(detail_soup: BeautifulSoup) -> str:
         """NEWOLD CAPITALの営業利益の抽出（修正版）"""
@@ -1926,19 +2471,213 @@ class DetailPageScraper:
         
         logging.warning("    -> No price found")
         return ""
+    
+    @staticmethod
+    def _extract_ondeck_profit(detail_soup: BeautifulSoup) -> str:
+        """オンデックの営業利益の抽出（完全修正版）"""
+        # オンデック専用のセレクタで詳細データ領域を直接指定
+        data_list = detail_soup.select_one('dl.p-sell-single__data__list')
+        if data_list:
+            dd_elements = data_list.find_all('dd')
+            for dd in dd_elements:
+                dd_text = dd.get_text(strip=True)
+                # 部分一致で営業利益を検索（空白などに対する耐性向上）
+                if '営業利益' in dd_text:
+                    dt = dd.find_next_sibling('dt')
+                    if dt:
+                        profit_text = dt.get_text(strip=True)
+                        logging.info(f"    -> Found profit via ondeck selector: {profit_text}")
+                        return profit_text
+        
+        # フォールバック1: より広範囲なセレクタ検索
+        all_dd_elements = detail_soup.find_all('dd')
+        for dd in all_dd_elements:
+            dd_text = dd.get_text(strip=True)
+            if '営業利益' in dd_text:
+                dt = dd.find_next_sibling('dt')
+                if dt:
+                    profit_text = dt.get_text(strip=True)
+                    if profit_text and '百万円' in profit_text:
+                        logging.info(f"    -> Found profit via fallback dd search: {profit_text}")
+                        return profit_text
+        
+        # フォールバック2: テキスト全体からの正規表現検索
+        full_text = detail_soup.get_text()
+        profit_patterns = [
+            r'営業利益[：:\s]*([^\n]+百万円[^\n]*)',
+            r'営業利益[：:\s]*約?([0-9,]+(?:～[0-9,]+)?百万円)'
+        ]
+        
+        for pattern in profit_patterns:
+            match = re.search(pattern, full_text)
+            if match:
+                profit_text = match.group(1).strip()
+                logging.info(f"    -> Found profit via text search: {profit_text}")
+                return profit_text
+        
+        logging.warning("    -> No profit information found")
+        return ""
+
+    @staticmethod
+    def _extract_ondeck_features(detail_soup: BeautifulSoup) -> str:
+        """オンデックのコメント（特色）の抽出（完全修正版）"""
+        # オンデック専用のセレクタで詳細データ領域を直接指定
+        data_list = detail_soup.select_one('dl.p-sell-single__data__list')
+        if data_list:
+            dd_elements = data_list.find_all('dd')
+            for dd in dd_elements:
+                dd_text = dd.get_text(strip=True)
+                # 部分一致でコメントを検索
+                if 'コメント' in dd_text:
+                    dt = dd.find_next_sibling('dt')
+                    if dt:
+                        features_text = dt.get_text(strip=True)
+                        logging.info(f"    -> Found features via ondeck selector: コメント")
+                        return features_text
+        
+        # フォールバック1: より広範囲なセレクタ検索
+        all_dd_elements = detail_soup.find_all('dd')
+        for dd in all_dd_elements:
+            dd_text = dd.get_text(strip=True)
+            if 'コメント' in dd_text:
+                dt = dd.find_next_sibling('dt')
+                if dt:
+                    features_text = dt.get_text(strip=True)
+                    if len(features_text) > 10:
+                        logging.info(f"    -> Found features via fallback dd search: コメント")
+                        return features_text
+        
+        # フォールバック2: テキスト全体からの検索
+        full_text = detail_soup.get_text()
+        features_patterns = [
+            r'コメント[：:\s]*([^\n]+)',
+            r'特色[：:\s]*([^\n]+)',
+            r'事業内容[：:\s]*([^\n]+)'
+        ]
+        
+        for pattern in features_patterns:
+            match = re.search(pattern, full_text)
+            if match:
+                features_text = match.group(1).strip()
+                if len(features_text) > 10:
+                    logging.info(f"    -> Found features via text search")
+                    return features_text
+        
+        logging.warning("    -> No features found")
+        return ""
+
+    @staticmethod
+    def _extract_ondeck_location(detail_soup: BeautifulSoup) -> str:
+        """オンデックの所在地の抽出（完全修正版）"""
+        # オンデック専用のセレクタで詳細データ領域を直接指定
+        data_list = detail_soup.select_one('dl.p-sell-single__data__list')
+        if data_list:
+            dd_elements = data_list.find_all('dd')
+            for dd in dd_elements:
+                dd_text = dd.get_text(strip=True)
+                # 部分一致で所在地関連のキーワードを検索
+                if any(keyword in dd_text for keyword in ['所在地', '地域', 'エリア']):
+                    dt = dd.find_next_sibling('dt')
+                    if dt:
+                        location_text = dt.get_text(strip=True)
+                        logging.info(f"    -> Found location via ondeck selector: {location_text}")
+                        return location_text
+        
+        # フォールバック1: より広範囲なセレクタ検索
+        all_dd_elements = detail_soup.find_all('dd')
+        for dd in all_dd_elements:
+            dd_text = dd.get_text(strip=True)
+            if any(keyword in dd_text for keyword in ['所在地', '地域', 'エリア']):
+                dt = dd.find_next_sibling('dt')
+                if dt:
+                    location_text = dt.get_text(strip=True)
+                    logging.info(f"    -> Found location via fallback dd search: {location_text}")
+                    return location_text
+        
+        # フォールバック2: テキスト全体からの検索
+        full_text = detail_soup.get_text()
+        location_patterns = [
+            r'所在地[：:\s]*([^\n]+)',
+            r'地域[：:\s]*([^\n]+)',
+            r'エリア[：:\s]*([^\n]+)'
+        ]
+        
+        for pattern in location_patterns:
+            match = re.search(pattern, full_text)
+            if match:
+                location_text = match.group(1).strip()
+                if len(location_text) > 1:
+                    logging.info(f"    -> Found location via text search: {location_text}")
+                    return location_text
+        
+        logging.warning("    -> No location found")
+        return ""
+
+    @staticmethod
+    def _extract_ondeck_price(detail_soup: BeautifulSoup) -> str:
+        """オンデックの譲渡希望額の抽出（完全修正版）"""
+        # オンデック専用のセレクタで詳細データ領域を直接指定
+        data_list = detail_soup.select_one('dl.p-sell-single__data__list')
+        if data_list:
+            dd_elements = data_list.find_all('dd')
+            for dd in dd_elements:
+                dd_text = dd.get_text(strip=True)
+                # 部分一致で譲渡希望額を検索
+                if '譲渡希望額' in dd_text:
+                    dt = dd.find_next_sibling('dt')
+                    if dt:
+                        price_text = dt.get_text(strip=True)
+                        logging.info(f"    -> Found price via ondeck selector: {price_text}")
+                        return price_text
+        
+        # フォールバック1: より広範囲なセレクタ検索
+        all_dd_elements = detail_soup.find_all('dd')
+        for dd in all_dd_elements:
+            dd_text = dd.get_text(strip=True)
+            if '譲渡希望額' in dd_text:
+                dt = dd.find_next_sibling('dt')
+                if dt:
+                    price_text = dt.get_text(strip=True)
+                    logging.info(f"    -> Found price via fallback dd search: {price_text}")
+                    return price_text
+        
+        # フォールバック2: テキスト全体からの検索
+        full_text = detail_soup.get_text()
+        price_patterns = [
+            r'譲渡希望額[：:\s]*([^\n]+)',
+            r'希望価格[：:\s]*([^\n]+)',
+            r'売却価格[：:\s]*([^\n]+)'
+        ]
+        
+        for pattern in price_patterns:
+            match = re.search(pattern, full_text)
+            if match:
+                price_text = match.group(1).strip()
+                if len(price_text) > 1:
+                    logging.info(f"    -> Found price via text search: {price_text}")
+                    return price_text
+        
+        logging.warning("    -> No price found")
+        return ""
 
 # --- Google Sheets接続クラス ---
 class GSheetConnector:
     """Google Sheets接続管理クラス"""
     def __init__(self, config: Dict):
+        # コンフィグから設定を読み込む（認証情報ファイルは除く）
         self.config = config['google_sheets']
         self.worksheet = self._connect()
 
     def _connect(self):
         logging.info("Connecting to Google Sheets...")
         try:
+            # 環境変数から認証情報ファイルのパスを取得
+            creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+            if not creds_path:
+                raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.")
+
             scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-            creds = Credentials.from_service_account_file(self.config['service_account_file'], scopes=scopes)
+            creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
             client = gspread.authorize(creds)
             spreadsheet = client.open_by_key(self.config['spreadsheet_id'])
             worksheet = spreadsheet.worksheet(self.config['sheet_name'])
@@ -1969,17 +2708,40 @@ class GSheetConnector:
         """新しい案件データをスプレッドシートに書き込み"""
         if not self.worksheet or not new_deals:
             return
+        
         logging.info(f"Writing {len(new_deals)} new deals to the spreadsheet...")
+        
         try:
+            # 書き込み直前に既存データを再取得（他のプロセスによる更新対応）
+            current_existing_ids = self.get_existing_ids()
+            
+            # 最終的な重複チェック
+            final_deals = []
+            for deal in new_deals:
+                if deal.unique_id not in current_existing_ids:
+                    final_deals.append(deal)
+                    logging.info(f"    -> Adding deal: {deal.deal_id} (unique_id: {deal.unique_id})")
+                else:
+                    logging.info(f"    -> Final duplicate check: Skipping {deal.deal_id} (unique_id: {deal.unique_id})")
+            
+            if not final_deals:
+                logging.info("No new deals to write after final duplicate check.")
+                return
+            
             all_values = self.worksheet.get_all_values()
             headers = [f.name for f in fields(FormattedDealData)]
+            
             if not all_values:
                 self.worksheet.append_row(headers, value_input_option='USER_ENTERED')
+            
             existing_headers = self.worksheet.row_values(1) if all_values else headers
-            rows_to_append = [[getattr(deal, key, '') for key in existing_headers] for deal in new_deals]
+            rows_to_append = [[getattr(deal, key, '') for key in existing_headers] for deal in final_deals]
+            
             if rows_to_append:
                 self.worksheet.append_rows(rows_to_append, value_input_option='USER_ENTERED')
-            logging.info(f"✅ Successfully appended {len(new_deals)} rows.")
+            
+            logging.info(f"✅ Successfully appended {len(final_deals)} rows.")
+            
         except Exception as e:
             logging.error(f"Error writing to spreadsheet: {e}")
 
@@ -2042,7 +2804,32 @@ def fetch_html(url: str) -> Optional[str]:
         with httpx.Client(timeout=15, follow_redirects=True) as client:
             response = client.get(url, headers=headers)
             response.raise_for_status()
-            return response.text
+            
+            # より堅牢なエンコーディング処理
+            try:
+                # まずはresponse.textを試す
+                content = response.text
+            except UnicodeDecodeError:
+                # 失敗した場合は複数のエンコーディングを試行
+                for encoding in ['utf-8', 'shift_jis', 'euc-jp', 'iso-2022-jp']:
+                    try:
+                        content = response.content.decode(encoding, errors='ignore')
+                        logging.info(f"Successfully decoded with {encoding} for {url}")
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    # 全て失敗した場合はUTF-8で強制デコード
+                    content = response.content.decode('utf-8', errors='ignore')
+                    logging.warning(f"Forced UTF-8 decode for {url}")
+            
+            # 取得したコンテンツが空でないことを確認
+            if not content or len(content) < 100:
+                logging.error(f"Retrieved content is too short or empty for {url}")
+                return None
+            
+            return content
+            
     except httpx.TimeoutException as e:
         raise httpx.RequestError(f"Timeout occurred: {e}")
     except httpx.HTTPStatusError as e:
@@ -2055,6 +2842,50 @@ def fetch_html(url: str) -> Optional[str]:
         logging.error(f"Unexpected error fetching {url}: {e}")
         return None
 
+# --- ユーティリティ関数 ---
+def load_config(file_path: str = 'config.yaml') -> None:
+    """設定ファイルの読み込み"""
+    global CONFIG
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        if 'GOOGLE_SHEETS_ID' in os.environ:
+            config['google_sheets']['spreadsheet_id'] = os.environ['GOOGLE_SHEETS_ID']
+        CONFIG = config
+    except Exception as e:
+        print(f"❌ Config file read error: {e}")
+        raise
+
+def setup_logging(config: Dict) -> None:
+    """ログ設定の初期化"""
+    log_config = config.get('logging', {})
+    logging.basicConfig(
+        level=getattr(logging, log_config.get('level', 'INFO').upper()),
+        format='%(asctime)s - %(levelname)s - [%(funcName)s] %(message)s',
+        handlers=[
+            logging.FileHandler(log_config.get('file_name', 'scraping.log'), encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
+
+def retry_on_failure(max_retries: int = 3, delay: int = 1):
+    """リトライデコレーター"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except httpx.RequestError as e:
+                    logging.warning(f"Network error. Retrying {attempt + 1}/{max_retries}: {e}")
+                    if attempt == max_retries - 1:
+                        logging.error("Max retries reached.")
+                        raise
+                    time.sleep(delay * (attempt + 1))
+            return None
+        return wrapper
+    return decorator
+
 def format_deal_data(raw_deals: List[RawDealData], existing_ids: Set[str]) -> List[FormattedDealData]:
     """生データを整形済みデータに変換"""
     formatted_deals = []
@@ -2062,11 +2893,26 @@ def format_deal_data(raw_deals: List[RawDealData], existing_ids: Set[str]) -> Li
     
     for raw_deal in raw_deals:
         try:
-            unique_id = hashlib.md5(f"{raw_deal.site_name}_{raw_deal.deal_id}".encode()).hexdigest()[:12]
+            # より堅牢なユニークID生成（URLベース）
+            if raw_deal.link:
+                # URLから案件IDを抽出してユニークIDを生成
+                url_based_id = f"{raw_deal.site_name}_{raw_deal.link}"
+                unique_id = hashlib.md5(url_based_id.encode()).hexdigest()[:12]
+            else:
+                # フォールバック: 従来の方法
+                unique_id = hashlib.md5(f"{raw_deal.site_name}_{raw_deal.deal_id}".encode()).hexdigest()[:12]
+            
+            # デバッグ情報をログ出力
+            logging.info(f"    -> Generating unique_id for {raw_deal.site_name} {raw_deal.deal_id}")
+            logging.info(f"       Link: {raw_deal.link}")
+            logging.info(f"       Generated unique_id: {unique_id}")
             
             if unique_id in existing_ids:
-                logging.info(f"    -> Skipping duplicate deal: {raw_deal.deal_id}")
+                logging.info(f"    -> Skipping duplicate deal: {raw_deal.deal_id} (unique_id: {unique_id})")
                 continue
+            
+            # 処理済みIDセットに追加（同一実行内での重複防止）
+            existing_ids.add(unique_id)
             
             # サイト別に売上高と営業利益を百万円単位に変換
             if raw_deal.site_name == "日本M&Aセンター":
@@ -2076,7 +2922,11 @@ def format_deal_data(raw_deals: List[RawDealData], existing_ids: Set[str]) -> Li
             elif raw_deal.site_name == "NEWOLD CAPITAL":
                 revenue = DataConverter.format_financial_text(raw_deal.revenue_text)  # 既に変換済み
                 profit = DataConverter.convert_newold_profit_to_million(raw_deal.profit_text)
-                price = DataConverter.convert_newold_price_to_million(raw_deal.price_text)  # 新しい変換関数を使用
+                price = DataConverter.convert_newold_price_to_million(raw_deal.price_text)
+            elif raw_deal.site_name == "オンデック":
+                revenue = DataConverter.clean_ondeck_revenue(raw_deal.revenue_text)
+                profit = DataConverter.clean_ondeck_profit(raw_deal.profit_text)
+                price = DataConverter.clean_ondeck_price(raw_deal.price_text)
             else:
                 # インテグループの場合は既に変換済み
                 revenue = DataConverter.format_financial_text(raw_deal.revenue_text)
@@ -2098,7 +2948,7 @@ def format_deal_data(raw_deals: List[RawDealData], existing_ids: Set[str]) -> Li
             )
             
             formatted_deals.append(formatted_deal)
-            logging.info(f"    -> Formatted deal: {raw_deal.deal_id} - {raw_deal.title[:50]}...")
+            logging.info(f"    -> Formatted deal: {raw_deal.deal_id} - {raw_deal.title[:50]}... (unique_id: {unique_id})")
             
         except Exception as e:
             logging.error(f"    -> Error formatting deal {raw_deal.deal_id}: {e}")
@@ -2208,6 +3058,157 @@ def scrape_newold_capital() -> List[RawDealData]:
     logging.info(f"🎯 Total deals found from NEWOLD CAPITAL: {len(all_deals)}")
     return all_deals
 
+def scrape_ondeck() -> List[RawDealData]:
+    """オンデックのスクレイピング実行（Selenium統一版）"""
+    logging.info("🔍 Starting scraping for: オンデック")
+    all_deals = []
+    
+    try:
+        # config.yamlから設定を読み込み
+        ondeck_config = None
+        for site_config in CONFIG.get('sites', []):
+            if site_config.get('name') == 'オンデック':
+                ondeck_config = site_config
+                break
+        
+        if not ondeck_config:
+            logging.error("オンデックの設定がconfig.yamlに見つかりません")
+            return all_deals
+        
+        base_url = ondeck_config['base_url']
+        max_pages = ondeck_config.get('max_pages', 3)
+        
+        # Seleniumの初期化
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        
+        driver = webdriver.Chrome(options=options)
+        
+        try:
+            # 一覧ページのスクレイピング
+            for page_num in range(1, max_pages + 1):
+                if page_num == 1:
+                    url = base_url.rstrip('/')
+                else:
+                    pagination_path = ondeck_config.get('pagination', {}).get('path', 'page/{page_num}/')
+                    url = f"{base_url.rstrip('/')}/{pagination_path.format(page_num=page_num)}"
+                
+                logging.info(f"  📄 Scraping page {page_num}: {url}")
+                
+                try:
+                    driver.get(url)
+                    WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                    time.sleep(3)  # ページ読み込み待機
+                    
+                    html_content = driver.page_source
+                    
+                    if not html_content or len(html_content) < 100:
+                        logging.error(f"  ❌ Retrieved content is too short for page {page_num}")
+                        continue
+                    
+                    # 一覧ページのパース（売上高フィルタリング込み）
+                    deals = OnDeckParser.parse_list_page(html_content)
+                    
+                    logging.info(f"  ✅ Found {len(deals)} deals meeting revenue criteria on page {page_num}")
+                    all_deals.extend(deals)
+                    
+                    time.sleep(2)  # ページ間の待機時間
+                    
+                except Exception as e:
+                    logging.error(f"  ❌ Failed to fetch page {page_num}: {e}")
+                    continue
+            
+            # 詳細ページの情報取得と二次フィルタリング（Seleniumで統一）
+            if all_deals:
+                logging.info(f"🔗 Fetching details for {len(all_deals)} deals from オンデック using Selenium")
+                enhanced_deals = []
+                
+                for i, deal in enumerate(all_deals, 1):
+                    try:
+                        logging.info(f"  📖 Processing deal {i}/{len(all_deals)}: {deal.deal_id}")
+                        
+                        # Seleniumで詳細ページにアクセス
+                        driver.get(deal.link)
+                        WebDriverWait(driver, 15).until(
+                            EC.presence_of_element_located((By.TAG_NAME, "body"))
+                        )
+                        time.sleep(2)  # ページ読み込み待機
+                        
+                        # 完全なHTMLを取得
+                        detail_html = driver.page_source
+                        detail_soup = BeautifulSoup(detail_html, 'lxml')
+                        
+                        # デバッグ用: 詳細ページHTMLファイル保存
+                        if CONFIG.get('debug', {}).get('save_html_files', False):
+                            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                            debug_file = f"debug/debug_ondeck_detail_{deal.deal_id}_{timestamp}.html"
+                            with open(debug_file, 'w', encoding='utf-8') as f:
+                                f.write(detail_html)
+                            logging.info(f"Debug: Detail HTML saved to {debug_file}")
+                        
+                        # 既存のパーサーメソッドを使用して情報抽出
+                        detail_info = {
+                            'profit': DetailPageScraper._extract_ondeck_profit(detail_soup),
+                            'features': DetailPageScraper._extract_ondeck_features(detail_soup),
+                            'location': DetailPageScraper._extract_ondeck_location(detail_soup),
+                            'price': DetailPageScraper._extract_ondeck_price(detail_soup)
+                        }
+                        
+                        if detail_info.get('profit'):
+                            # 営業利益による二次フィルタリング
+                            if DataConverter.parse_ondeck_profit(detail_info['profit']):
+                                logging.info(f"    -> Deal {deal.deal_id} meets profit criteria: {detail_info['profit']}")
+                                
+                                # 詳細情報を設定
+                                deal.profit_text = detail_info.get('profit', '')
+                                deal.features_text = detail_info.get('features', '')
+                                deal.location_text = detail_info.get('location', '')
+                                deal.price_text = detail_info.get('price', '')
+                                
+                                enhanced_deals.append(deal)
+                            else:
+                                logging.info(f"    -> Skipping deal {deal.deal_id}: Profit '{detail_info['profit']}' doesn't meet criteria")
+                        else:
+                            logging.warning(f"    -> No profit info found for deal {deal.deal_id}")
+                        
+                        time.sleep(1)  # リクエスト間の待機時間
+                        
+                    except Exception as e:
+                        logging.error(f"  ❌ Error processing deal {deal.deal_id}: {e}")
+                        continue
+                
+                logging.info(f"✅ Enhanced {len(enhanced_deals)} deals meeting all criteria")
+                all_deals = enhanced_deals
+        
+        finally:
+            driver.quit()
+    
+    except Exception as e:
+        logging.error(f"❌ Error scraping オンデック: {e}")
+        logging.debug(traceback.format_exc())
+    
+    logging.info(f"🎯 Total deals found from オンデック: {len(all_deals)}")
+    return all_deals
+
+# enhance_ondeck_deals_with_details関数を無効化（不要になったため）
+def enhance_ondeck_deals_with_details(raw_deals: List[RawDealData]) -> List[RawDealData]:
+    """オンデックは既に詳細情報を含んでいるのでそのまま返す"""
+    logging.info(f"✅ オンデック deals already enhanced: {len(raw_deals)} deals")
+    return raw_deals
+
 def enhance_nihon_ma_deals_with_details(raw_deals: List[RawDealData]) -> List[RawDealData]:
     """日本M&Aセンターの詳細ページから情報を取得して既存データを拡張"""
     logging.info(f"🔗 Fetching details for {len(raw_deals)} deals from 日本M&Aセンター")
@@ -2274,7 +3275,7 @@ def enhance_integroup_deals_with_details(raw_deals: List[RawDealData]) -> List[R
     return enhanced_deals
 
 def enhance_newold_deals_with_details(raw_deals: List[RawDealData]) -> List[RawDealData]:
-    """NEWOLD CAPITALの詳細ページから情報を取得して既存データを拡張"""
+    """NEWOLD CAPITALの詳細ページから情報を取得して既存データを拡張（タイトル更新追加版）"""
     logging.info(f"🔗 Fetching details for {len(raw_deals)} deals from NEWOLD CAPITAL")
     enhanced_deals = []
     
@@ -2284,6 +3285,11 @@ def enhance_newold_deals_with_details(raw_deals: List[RawDealData]) -> List[RawD
             
             # 詳細ページから情報取得
             detail_info = DetailPageScraper.fetch_newold_details(deal.link)
+            
+            # タイトルを更新（重要な修正点）
+            if detail_info.get('title'):
+                deal.title = detail_info['title']
+                logging.info(f"    -> Updated title to: {deal.title}")
             
             if detail_info.get('profit'):
                 # 営業利益のフィルタリング
@@ -2310,6 +3316,44 @@ def enhance_newold_deals_with_details(raw_deals: List[RawDealData]) -> List[RawD
     logging.info(f"✅ Enhanced {len(enhanced_deals)} deals meeting all criteria")
     return enhanced_deals
 
+def enhance_ondeck_deals_with_details(raw_deals: List[RawDealData]) -> List[RawDealData]:
+    """オンデックの詳細ページから情報を取得して二次フィルタリング"""
+    logging.info(f"🔗 Fetching details for {len(raw_deals)} deals from オンデック")
+    enhanced_deals = []
+    
+    for i, deal in enumerate(raw_deals, 1):
+        try:
+            logging.info(f"  📖 Processing deal {i}/{len(raw_deals)}: {deal.deal_id}")
+            
+            # 詳細ページから情報取得
+            detail_info = DetailPageScraper.fetch_ondeck_details(deal.link)
+            
+            if detail_info.get('profit'):
+                # 営業利益による二次フィルタリング
+                if DataConverter.parse_ondeck_profit(detail_info['profit']):
+                    logging.info(f"    -> Deal {deal.deal_id} meets profit criteria: {detail_info['profit']}")
+                    
+                    # 詳細情報を設定
+                    deal.profit_text = detail_info.get('profit', '')
+                    deal.features_text = detail_info.get('features', '')
+                    deal.location_text = detail_info.get('location', '')
+                    deal.price_text = detail_info.get('price', '')
+                    
+                    enhanced_deals.append(deal)
+                else:
+                    logging.info(f"    -> Skipping deal {deal.deal_id}: Profit '{detail_info['profit']}' doesn't meet criteria")
+            else:
+                logging.warning(f"    -> No profit info found for deal {deal.deal_id}")
+            
+            time.sleep(1)  # リクエスト間の待機時間
+            
+        except Exception as e:
+            logging.error(f"  ❌ Error processing deal {deal.deal_id}: {e}")
+            continue
+    
+    logging.info(f"✅ Enhanced {len(enhanced_deals)} deals meeting all criteria")
+    return enhanced_deals
+
 def main():
     """メイン実行関数"""
     try:
@@ -2317,7 +3361,7 @@ def main():
         setup_logging(CONFIG)
         
         logging.info("🚀 Starting M&A deal scraping process")
-        logging.info("📊 Target sites: 日本M&Aセンター, インテグループ, NEWOLD CAPITAL")
+        logging.info("📊 Target sites: 日本M&Aセンター, インテグループ, NEWOLD CAPITAL, オンデック")
         
         sheet_connector = GSheetConnector(CONFIG)
         if not sheet_connector.worksheet:
@@ -2379,6 +3423,20 @@ def main():
             logging.info(f"✅ NEWOLD CAPITAL: {len(newold_formatted_deals)} new deals after all filtering")
         else:
             logging.info("No deals found from NEWOLD CAPITAL")
+        
+        # オンデックのスクレイピング実行（Selenium統一版 - 詳細取得も含む）
+        logging.info("=" * 60)
+        logging.info("オンデック processing started")
+        ondeck_enhanced_deals = scrape_ondeck()  # 既に詳細情報取得とフィルタリング済み
+        
+        if ondeck_enhanced_deals:
+            # データ整形のみ
+            ondeck_formatted_deals = format_deal_data(ondeck_enhanced_deals, existing_ids)
+            all_formatted_deals.extend(ondeck_formatted_deals)
+            
+            logging.info(f"✅ オンデック: {len(ondeck_formatted_deals)} new deals after all filtering")
+        else:
+            logging.info("No deals found from オンデック")
         
         # 結果をスプレッドシートに書き込み
         logging.info("=" * 60)
